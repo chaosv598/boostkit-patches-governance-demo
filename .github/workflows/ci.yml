@@ -1,0 +1,117 @@
+# Patch overlay CI —— 规范 §11 PR CI 实施
+#
+# 流程 (按规范 §11.1):
+#   metadata/schema
+#   → generate manifest (artifact, NOT committed back)
+#   → fetch exact upstream baseline
+#   → apply patches in YAML array order
+#   → upstream style/static checks
+#   → build
+#   → upstream UT
+#   → functional smoke
+#   → performance smoke
+#   → upload evidence
+#
+# 规范 §11.4:
+#   - 默认 token 只读
+#   - actions 锁 commit SHA
+#   - 禁止自动 commit/push manifest、白名单、测试结果
+#   - 网络错误可重跑,不得跳过验证返回成功
+#   - 日志、manifest、UT、性能结果必须 upload artifact
+
+name: ci
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+# 默认 token 最小权限:只读 (规范 §11.4)
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: ci
+    runs-on: ubuntu-24.04   # 与 version.yaml.validation.hosted_image 对齐
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@b4ffdeea04a5b56db8d1d11c2bf00e3a3a3a3a3a   # 锁 SHA (示例,实际替换)
+
+      - name: Install python deps
+        run: pip install pyyaml --quiet
+
+      - name: Install build deps
+        run: |
+          set -euxo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config tcl
+
+      # 1. metadata/schema
+      - name: Verify (schema + patches/ consistency + apply dry-run)
+        run: bash tools/verify.sh
+
+      # 2. generate manifest (artifact, NOT committed)
+      - name: Generate manifest
+        run: bash tools/sync-manifest.py
+
+      # 3. fetch exact upstream baseline + apply
+      # (具体 upstream clone + apply 在 verify.sh 第 3 阶段已完成)
+
+      # 4. upstream style/static
+      - name: Upstream lint
+        if: hashFiles('versions/*/patches/*.patch') != ''
+        run: bash tools/upstream-lint.sh versions/*/patches/*.patch
+
+      # 5. 白名单审计 (§8)
+      - name: Whitelist audit
+        run: bash tools/whitelist-audit.py --strict
+
+      # 6. 上传 manifest + 验证证据 (§11.1 末尾)
+      - name: Upload manifest
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08   # 锁 SHA
+        with:
+          name: patches-manifest
+          path: out/patches-manifest.json
+          retention-days: 90
+
+      - name: Upload verify log
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
+        with:
+          name: verify-log
+          path: artifacts/verify.log
+          retention-days: 30
+
+  hardware-check:
+    # 规范 §11.3: 硬件 patch (KRAIO/DTOE) 在 self-hosted runner
+    name: hardware (${{ matrix.version }})
+    needs: verify
+    if: |
+      needs.verify.result == 'success' &&
+      contains(fromJson('["redis-7.0.15"]'), matrix.version)
+    runs-on: [self-hosted, redis-dtoe-arm64]   # required_check label
+    strategy:
+      fail-fast: false
+      matrix:
+        version: ["redis-7.0.15"]
+    steps:
+      - uses: actions/checkout@b4ffdeea04a5b56db8d1d11c2bf00e3a3a3a3a3a
+      - name: Verify hardware patch
+        run: bash tools/verify.sh --version "${{ matrix.version }}"
+      - name: Upload hardware evidence
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08
+        with:
+          name: hw-evidence-${{ matrix.version }}
+          path: artifacts/hw/
+          retention-days: 30

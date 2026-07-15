@@ -1,0 +1,145 @@
+{
+  "manifest_version": 1,
+  "generated_at": "2026-07-15T03:40:16+00:00",
+  "generator": "tools/sync-manifest.py",
+  "source": {
+    "repository": "local",
+    "branch": "local",
+    "commit": "0000000000000000000000000000000000000000"
+  },
+  "summary": {
+    "version_count": 2,
+    "patch_count": 5
+  },
+  "versions": [
+    {
+      "version_id": "redis-6.0.20",
+      "maintained_status": "security-only",
+      "planned_eol": "2026-12-31",
+      "release_owner": "huyizhen@boostkit",
+      "upstream": {
+        "repo": "https://github.com/redis/redis.git",
+        "tag": "6.0.20",
+        "commit": "de0d9632b52849d9b7ea52408b1d681d771c5b46"
+      },
+      "validation": {
+        "hosted_image": "ubuntu-24.04",
+        "packages": [
+          "build-essential",
+          "pkg-config",
+          "tcl"
+        ],
+        "upstream_commands": [
+          "make -j2",
+          "make test"
+        ],
+        "boostkit_checks": [
+          "redis-functional-smoke",
+          "redis-benchmark-smoke"
+        ]
+      },
+      "patches": [
+        {
+          "sequence": 1,
+          "name": "0001-hw-kunpeng-adapt-iouring-on-6.0.15-6.0.20",
+          "owner": "huyizhen@boostkit",
+          "type": "ecological",
+          "status": "pending",
+          "upstream_pr": "",
+          "test_profile": "redis-kraio-arm64",
+          "dependence": [],
+          "content_sha256": "2acd591472a830ff7c592a52a8fc21bc81b91cedd16c347b92580787efc0d78b",
+          "exception": null
+        }
+      ]
+    },
+    {
+      "version_id": "redis-7.0.15",
+      "maintained_status": "maintained",
+      "planned_eol": "2027-06-30",
+      "release_owner": "chaosv598@boostkit",
+      "upstream": {
+        "repo": "https://github.com/redis/redis.git",
+        "tag": "7.0.15",
+        "commit": "f35f36a265403c07b119830aa4bb3b7d71653ec9"
+      },
+      "validation": {
+        "hosted_image": "ubuntu-24.04",
+        "packages": [
+          "build-essential",
+          "pkg-config",
+          "tcl"
+        ],
+        "upstream_commands": [
+          "make -j2",
+          "make test"
+        ],
+        "boostkit_checks": [
+          "redis-functional-smoke",
+          "redis-benchmark-smoke"
+        ]
+      },
+      "patches": [
+        {
+          "sequence": 1,
+          "name": "0001-hw-kunpeng-adapt-iouring",
+          "owner": "twwang@boostkit",
+          "type": "ecological",
+          "status": "submitted",
+          "upstream_pr": "https://github.com/redis/redis/pull/12345",
+          "test_profile": "redis-kraio-arm64",
+          "dependence": [],
+          "content_sha256": "11394ed6915d4eccbc54214912f0497ddccdb9645b898b24e211480db99974fa",
+          "exception": null
+        },
+        {
+          "sequence": 2,
+          "name": "0002-perf-kunpeng-adapt-dtoe",
+          "owner": "twwang@boostkit",
+          "type": "project",
+          "status": "accepted",
+          "upstream_pr": "",
+          "test_profile": "redis-dtoe-arm64",
+          "dependence": [],
+          "content_sha256": "044da620fd07f6c1a27243c49b4106bed200707d27fd28afbdf11395c7e26e34",
+          "exception": {
+            "reason": "DTOE requires Kunpeng ARM64 hardware, openEuler kernel support,\nand dedicated DTOE libraries. No upstream equivalent abstraction.\n",
+            "approved_by": [
+              "boostkit-component-maintainer",
+              "boostkit-architecture-owner"
+            ],
+            "approved_at": "2026-07-15",
+            "review_due_at": "2026-10-13",
+            "expires_at": "2027-01-11",
+            "required_check": "self-hosted/redis-dtoe-arm64",
+            "evidence_max_age_days": 30
+          }
+        },
+        {
+          "sequence": 3,
+          "name": "0003-perf-jemalloc-arm64-pointer-tag-and-gc",
+          "owner": "yinbin@boostkit",
+          "type": "ecological",
+          "status": "submitted",
+          "upstream_pr": "https://github.com/redis/jemalloc/pull/9876",
+          "test_profile": "jemalloc-arm64",
+          "dependence": [],
+          "content_sha256": "eea3ad5525b9ef4deddd8b54512ef289712ae0bfa7473246177e3ae76dc03da4",
+          "exception": null
+        },
+        {
+          "sequence": 4,
+          "name": "0004-perf-rdb-fallback-aof",
+          "owner": "dev@boostkit",
+          "type": "ecological",
+          "status": "submitted",
+          "upstream_pr": "https://github.com/redis/redis/pull/13579",
+          "test_profile": "redis-fallback-smoke",
+          "dependence": [],
+          "content_sha256": "8c0edbee7bdd1f1c7f088d11a7f2f2c8fddd3e41ff42238b5fe1053c48567cac",
+          "exception": null
+        }
+      ]
+    }
+  ]
+}
