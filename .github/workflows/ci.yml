@@ -64,7 +64,7 @@ jobs:
 
       # 2. generate manifest (artifact, NOT committed) (§9 + §11.1 阶段 2)
       - name: Generate manifest
-        run: bash tools/sync-manifest.py
+        run: python3 tools/sync-manifest.py
 
       # 3+4. upstream apply dry-run + lint (§11.1 阶段 3-4)
       #    (verify.sh 已完成 apply dry-run;lint 在此)
@@ -76,7 +76,7 @@ jobs:
 
       # 5. 白名单审计 (§8)
       - name: Whitelist audit
-        run: bash tools/whitelist-audit.py --strict
+        run: python3 tools/whitelist-audit.py --strict
 
       # 6. 上传 manifest + 验证证据 (§11.1 末尾)
       - name: Upload manifest
