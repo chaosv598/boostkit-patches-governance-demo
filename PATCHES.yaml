@@ -1,6 +1,6 @@
 _warning: ⚠️ 由 tools/sync-manifest.py 自动生成,禁止手改。开发者请编辑 versions/<v>/version.yaml
 manifest_version: 1
-generated_at: '2026-07-15T11:55:09+08:00'
+generated_at: '2026-07-15T04:00:29+00:00'
 generated_by: tools/sync-manifest.py
 patches:
 - id: P-0001-hw-kunpeng-adapt-iouring-on-6.0.15-6.0.20
