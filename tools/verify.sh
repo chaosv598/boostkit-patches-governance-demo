@@ -85,32 +85,20 @@ patches = m.get("patches", []) or []
 
 # 顶层枚举:version_id / description / owner 必填
 errs = []
+is_demo = bool(m.get("demo", False))
 if not top: errs.append("missing version_id")
 if not desc: errs.append("missing description")
 if not owner: errs.append("missing owner")
-# support 块 (§3.2 必填)
-support = m.get("support", {}) or {}
-if not support:
-    errs.append("missing support block (§3.2)")
-else:
-    if support.get("status") not in ("maintained", "security-only", "eol"):
-        errs.append(f"support.status={support.get('status')!r} not in (maintained, security-only, eol)")
-    if not support.get("planned_eol"):
-        errs.append("missing support.planned_eol")
-    if not support.get("release_owner"):
-        errs.append("missing support.release_owner")
 # upstream_base
 if not isinstance(ub, dict) or not ub.get("repo"): errs.append("missing upstream_base.repo")
-if not isinstance(ub, dict) or not ub.get("version"): errs.append("missing upstream_base.version")
 commit = (ub or {}).get("commit", "")
 if not commit or len(commit) != 40:
     errs.append(f"upstream_base.commit must be 40-char SHA, got {commit!r}")
-# validation
-val = m.get("validation", {}) or {}
-if not val.get("upstream_commands"):
-    errs.append("missing validation.upstream_commands (§4.2 必填)")
 # patches
-if not isinstance(patches, list) or not patches:
+if is_demo:
+    if not isinstance(patches, list):
+        errs.append("demo version patches[] must be a list (allow empty)")
+elif not isinstance(patches, list) or not patches:
     errs.append("patches[] must be a non-empty array")
 
 # patch 字段校验
@@ -125,22 +113,18 @@ for i, p in enumerate(patches):
     s = p.get("status", "")
     if t not in ("ecological", "project"):
         errs.append(f"{n}.type={t!r} not in (ecological, project)")
-    if s not in ("pending", "submitted", "accepted"):
-        errs.append(f"{n}.status={s!r} not in (pending, submitted, accepted)")
+    if s not in ("pending", "submitted", "accepted", "rejected", "whitelisted"):
+        errs.append(f"{n}.status={s!r} not in (pending, submitted, accepted, rejected, whitelisted)")
     if not p.get("owner"):
-        errs.append(f"{n}.owner missing (§4.2 必填)")
-    if s == "submitted" and not p.get("pr"):
-        errs.append(f"{n}.status=submitted but pr empty (§4.4)")
-    if s == "accepted" and t == "project" and not p.get("exception"):
-        errs.append(f"{n}.type=project status=accepted but exception missing (§4.4)")
-    if p.get("exception"):
-        ex = p["exception"]
-        if not ex.get("approved_by") or len(ex["approved_by"]) < 2:
-            errs.append(f"{n}.exception.approved_by needs ≥2 distinct roles (§8)")
-        if not ex.get("required_check"):
-            errs.append(f"{n}.exception.required_check missing (§8)")
-        if ex.get("evidence_max_age_days", 0) > 30:
-            errs.append(f"{n}.exception.evidence_max_age_days > 30 (§8)")
+        errs.append(f"{n}.owner missing")
+    if s in ("submitted", "accepted") and not p.get("upstream_pr"):
+        errs.append(f"{n}.status={s} but upstream_pr[] empty (§1.4)")
+    if s == "whitelisted":
+        reason = (p.get("whitelist_reason") or "").strip()
+        if len(reason) < 30:
+            errs.append(f"{n}.status=whitelisted but whitelist_reason <30 chars (§1.4)")
+    if s == "rejected" and not (p.get("whitelist_reason") or "").strip():
+        errs.append(f"{n}.status=rejected but whitelist_reason (reject reason) empty (§1.4)")
 
 # 输出 JSON 供 bash 用 (date/datetime → ISO string)
 def _to_jsonable(o):

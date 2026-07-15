@@ -1,26 +1,22 @@
-# Patch overlay CI —— 规范 §11 PR CI 实施
+# Patch overlay CI —— 规范 §8.1 实施
 #
-# 流程 (按规范 §11.1):
-#   metadata/schema
-#   → generate manifest (artifact, NOT committed back)
-#   → fetch exact upstream baseline
-#   → apply patches in YAML array order
-#   → upstream style/static checks
-#   → build
-#   → upstream UT
-#   → functional smoke
-#   → performance smoke
-#   → upload evidence
+# 流程 (按规范 §8.1 ci.yml):
+#   1. tools/sync-manifest.py --check   (PATCHES.yaml / WHITELIST.yaml / docs/PATCHES-STATUS.md 与 version.yaml 一致)
+#   2. yaml schema 校验 (verify.sh 第 2 阶段)
+#   3. patch 文件名格式校验 (verify.sh 第 2 阶段)
+#   4. upstream apply dry-run (verify.sh 第 3 阶段)
+#   5. upstream-lint (trailing-ws / CRLF / tab-width / subject 长度)
+#   6. whitelist_reason 字数 + reason 文本检查
 #
-# 规范 §11.4:
-#   - 默认 token 只读
-#   - actions 锁 commit SHA (demo 用 @v4 tag,生产替换为真 40-char SHA)
-#   - 禁止自动 commit/push manifest、白名单、测试结果
-#   - 网络错误可重跑,不得跳过验证返回成功
-#   - 日志、manifest、UT、性能结果必须 upload artifact
+# 失败策略 (规范 §8.2):
+#   - ci.yml 任何一项 fail = block merge
+#   - build-perf build 失败 = block merge
+#   - build-perf bench 异常 = warn 不 block
+#   - upstream-test 失败 = warn, owner 解释
 #
-# 注:hardware-check job (规范 §11.3) 需要 self-hosted runner + redis-dtoe-arm64 label,
-#    本仓 demo 不带真实硬件,在真实生产环境应开启。
+# sync-manifest drift 自动化 (规范 §8.3):
+#   - merge 前 PATCHES.yaml 必须与 version.yaml 推导结果完全一致
+#   - drift 时 CI 自动 commit 修复并 push
 
 name: ci
 
@@ -35,85 +31,57 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# 默认 token 最小权限:只读 (规范 §11.4)
 permissions:
-  contents: read
+  contents: write   # sync-manifest --write 时需要 commit/push
 
 jobs:
   verify:
     name: ci
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 15
     steps:
       - name: Checkout
-        uses: actions/checkout@v4   # 规范 §11.4 要求锁 SHA,生产应替换为 40 字符真 SHA
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install python deps
+      - name: Install pyyaml
         run: pip install pyyaml --quiet
 
-      - name: Install build deps
+      # 1. sync-manifest drift 检测 (§8.1 阶段 1)
+      - name: Sync manifest check
+        id: sync-check
         run: |
-          set -euxo pipefail
-          sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends \
-            build-essential pkg-config tcl
+          if python3 tools/sync-manifest.py --check; then
+            echo "drift=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "drift=true" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
 
-      # 1. metadata/schema (§11.1 阶段 1)
-      - name: Verify (schema + patches/ consistency + apply dry-run)
+      # 1.5 drift 自动修复 + push (规范 §8.3)
+      - name: Auto-fix manifest drift
+        if: steps.sync-check.outputs.drift == 'true'
+        run: |
+          python3 tools/sync-manifest.py --write
+          git config user.name "boostkit-bot"
+          git config user.email "boostkit-bot@boostkit"
+          git add PATCHES.yaml WHITELIST.yaml docs/PATCHES-STATUS.md
+          git commit -m "manifest: auto-sync from version.yaml [skip ci]"
+          git push
+
+      # 2-4. yaml schema + 文件名 + apply dry-run (verify.sh)
+      - name: Verify (schema + apply dry-run)
         run: bash tools/verify.sh
 
-      # 2. generate manifest (artifact, NOT committed) (§9 + §11.1 阶段 2)
-      - name: Generate manifest
-        run: python3 tools/sync-manifest.py
-
-      # 3+4. upstream apply dry-run + lint (§11.1 阶段 3-4)
-      #    (verify.sh 已完成 apply dry-run;lint 在此)
+      # 5. upstream-lint (§7.1 风格检查)
       - name: Upstream lint
         run: |
           if ls versions/*/patches/*.patch 2>/dev/null | head -1 >/dev/null; then
             bash tools/upstream-lint.sh versions/*/patches/*.patch
           fi
 
-      # 5. 白名单审计 (§8)
+      # 6. whitelist 审计 (§4.4)
       - name: Whitelist audit
         run: python3 tools/whitelist-audit.py --strict
-
-      # 6. 上传 manifest + 验证证据 (§11.1 末尾)
-      - name: Upload manifest
-        if: always()
-        uses: actions/upload-artifact@v4   # 规范 §11.4 要求锁 SHA
-        with:
-          name: patches-manifest
-          path: out/patches-manifest.json
-          retention-days: 90
-
-      - name: Upload verify log
-        if: always()
-        uses: actions/upload-artifact@v4   # 规范 §11.4 要求锁 SHA
-        with:
-          name: verify-log
-          path: artifacts/verify.log
-          retention-days: 30
-
-  # 规范 §11.3 硬件 check — 在真实生产环境启用,需要 self-hosted runner + 硬件 label
-  # demo 仓不启用 (会无限等待 self-hosted runner)
-  # hardware-check:
-  #   name: hardware (${{ matrix.version }})
-  #   needs: verify
-  #   if: needs.verify.result == 'success'
-  #   runs-on: [self-hosted, redis-dtoe-arm64]
-  #   strategy:
-  #     fail-fast: false
-  #     matrix:
-  #       version: ["redis-7.0.15"]
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - name: Verify hardware patch
-  #       run: bash tools/verify.sh --version "${{ matrix.version }}"
-  #     - name: Upload hardware evidence
-  #       if: always()
-  #       uses: actions/upload-artifact@v4
-  #       with:
-  #         name: hw-evidence-${{ matrix.version }}
-  #         path: artifacts/hw/
-  #         retention-days: 30

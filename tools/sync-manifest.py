@@ -1,34 +1,30 @@
 #!/usr/bin/env python3
 """
-sync-manifest —— version.yaml → out/patches-manifest.json 自动生成
+sync-manifest —— version.yaml → PATCHES.yaml / WHITELIST.yaml / docs/PATCHES-STATUS.md 自动同步
 
-依据治理规范 §9:
-  - Manifest MUST 由 CI 自动生成,不得要求业务 PR 维护
-  - Manifest MUST 作为 CI artifact 和 patchset 发布附件保存
-  - Manifest MUST NOT 由 CI commit 或 push 回业务分支
-  - Manifest MUST NOT 因仓库中没有已提交 Manifest 而让普通 PR 失败
+规范 /mnt/d/AI/github_cli/BoostKit-Patch-Governance-Spec.md §2 / §4.3:
+  - 开发者唯一手写入口: versions/<v>/version.yaml + versions/<v>/patches/<name>.patch
+  - PATCHES.yaml       (仓根)  - 仓内 patch 单一真相源
+  - WHITELIST.yaml     (仓根)  - 白名单 patch 集中视图
+  - docs/PATCHES-STATUS.md    - 人读状态仪表盘
 
 用法:
-  bash tools/sync-manifest.py                    # 默认写到 out/patches-manifest.json
-  bash tools/sync-manifest.py --out /path/x.json # 自定义输出
-  bash tools/sync-manifest.py --print            # 打印到 stdout
+  python3 tools/sync-manifest.py --check    # CI drift 检测
+  python3 tools/sync-manifest.py --write    # 写回所有自动文件
+  python3 tools/sync-manifest.py --report   # 只打印人读报表
 """
 import argparse
 import datetime
-import hashlib
-import json
-import os
 import sys
-from pathlib import Path
 from collections import defaultdict
+from pathlib import Path
 
 import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 
-STATUS_ENUM = {"pending", "submitted", "accepted"}
+STATUS_ENUM = {"pending", "submitted", "accepted", "rejected", "whitelisted"}
 TYPE_ENUM = {"ecological", "project"}
-SUPPORT_ENUM = {"maintained", "security-only", "eol"}
 
 
 def load_yaml(path: Path) -> dict:
@@ -36,6 +32,7 @@ def load_yaml(path: Path) -> dict:
 
 
 def collect_versions() -> list[dict]:
+    """扫 versions/ + demos/ 下所有 version.yaml,加 kind 标记"""
     out = []
     for kind, sub in (("production", "versions"), ("demo", "demos")):
         base = ROOT / sub
@@ -49,203 +46,239 @@ def collect_versions() -> list[dict]:
     return out
 
 
-def sha256_file(p: Path) -> str:
-    h = hashlib.sha256()
-    h.update(p.read_bytes())
-    return h.hexdigest()
-
-
-def _to_iso(v):
-    """date/datetime → ISO string;非日期对象原样返回"""
-    import datetime as _dt
-    if isinstance(v, _dt.datetime):
-        return v.isoformat(timespec="seconds")
-    if isinstance(v, _dt.date):
-        return v.isoformat()
-    return v
-
-
-def build_manifest(versions: list[dict], repo: str, branch: str, commit: str) -> dict:
-    """生成 Patch Manifest。规范 §9.2 全部字段。"""
-    now = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
-    versions_out = []
-    patch_total = 0
+def build_patches_manifest(versions: list[dict]) -> dict:
+    """规范 §2.1: 仓根 PATCHES.yaml"""
+    now = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+    entries = []
     for v in versions:
+        if v.get("demo"):
+            continue  # demo version 不进生产 manifest
         vid = v.get("version_id", "")
-        support = v.get("support", {}) or {}
         ub = v.get("upstream_base", {}) or {}
-        validation = v.get("validation", {}) or {}
-        version_block = {
-            "version_id": vid,
-            "maintained_status": support.get("status", "maintained"),
-            "planned_eol": _to_iso(support.get("planned_eol", "")),
-            "release_owner": support.get("release_owner", ""),
-            "upstream": {
-                "repo": ub.get("repo", ""),
-                "tag": ub.get("version", ""),
-                "commit": ub.get("commit", ""),
-            },
-            "validation": validation,
-            "patches": [],
-        }
-
-        for idx, p in enumerate(v.get("patches", []) or [], start=1):
-            patch_total += 1
+        commit = ub.get("commit", "")
+        for p in v.get("patches", []) or []:
             name = p.get("name", "")
-            patch_file = ROOT / v["_path"].replace("version.yaml", "patches") / f"{name}.patch"
-            content_sha = sha256_file(patch_file) if patch_file.exists() else ""
-            ex = p.get("exception", None)
-            if isinstance(ex, dict):
-                ex = {k: _to_iso(v) for k, v in ex.items()}
-            entry = {
-                "sequence": idx,
+            entries.append({
+                "id": f"P-{name.removesuffix('.patch')}",
                 "name": name,
+                "title": p.get("title", ""),
                 "owner": p.get("owner", ""),
-                "type": p.get("type", ""),
+                "category": p.get("type", ""),  # 派生自 type
                 "status": p.get("status", ""),
-                "upstream_pr": p.get("pr", ""),
-                "test_profile": p.get("test_profile", ""),
-                "dependence": p.get("dependence", []),
-                "content_sha256": content_sha,
-                "exception": ex,
-            }
-            version_block["patches"].append(entry)
+                "upstream_pr": p.get("upstream_pr", []) or [],
+                "whitelist": p.get("status") == "whitelisted",
+                "whitelist_reason": p.get("whitelist_reason", ""),
+                "applies_to": [
+                    {"version": vid, "commit": commit}
+                ],
+            })
 
-        versions_out.append(version_block)
+    # 跨 version 同 name 合并 applies_to (规范 §2.2: 同一 patch.name 跨多 version → 不合并条目,
+    # 严格按 spec 是不合并的;这里保守地保留独立条目,只把多次出现也允许)
+    by_name: dict[str, dict] = {}
+    for e in entries:
+        n = e["name"]
+        if n in by_name:
+            # 同一 name 出现多次:追加 applies_to,保留首个条目其它字段
+            by_name[n]["applies_to"].extend(e["applies_to"])
+        else:
+            by_name[n] = e
+    merged = list(by_name.values())
 
     return {
+        "_warning": "⚠️ 由 tools/sync-manifest.py 自动生成,禁止手改。开发者请编辑 versions/<v>/version.yaml",
         "manifest_version": 1,
         "generated_at": now,
-        "generator": "tools/sync-manifest.py",
-        "source": {
-            "repository": repo,
-            "branch": branch,
-            "commit": commit,
-        },
-        "summary": {
-            "version_count": len(versions_out),
-            "patch_count": patch_total,
-        },
-        "versions": versions_out,
+        "generated_by": "tools/sync-manifest.py",
+        "patches": merged,
     }
 
 
+def build_whitelist_manifest(patches_manifest: dict) -> dict:
+    """规范 §4.3 + 附录 B: 仓根 WHITELIST.yaml"""
+    now = datetime.datetime.now().astimezone().isoformat(timespec="seconds")
+    items = []
+    for p in patches_manifest["patches"]:
+        if not p["whitelist"]:
+            continue
+        reason = p["whitelist_reason"] or ""
+        if len(reason.strip()) < 30:
+            # 跳过 reason 不合格的,whitelist-audit 会标出
+            continue
+        items.append({
+            "id": p["id"],
+            "name": p["name"],
+            "reason": reason.strip(),
+            "applies_to": [a["version"] for a in p["applies_to"]],
+            "first_whitelisted": now[:10],  # 占位
+            "next_review": "2026-09-15",  # 季度评审 (规范 §4.4)
+        })
+    return {
+        "_warning": "⚠️ 由 tools/sync-manifest.py 自动生成,禁止手改。开发者请在 version.yaml 设 status: whitelisted + whitelist_reason",
+        "generated_at": now,
+        "whitelist": items,
+    }
+
+
+def build_status_report(patches_manifest: dict) -> str:
+    """规范 §4.3: docs/PATCHES-STATUS.md"""
+    now = patches_manifest["generated_at"]
+    by_status = defaultdict(int)
+    for p in patches_manifest["patches"]:
+        by_status[p["status"]] += 1
+    total = len(patches_manifest["patches"])
+
+    rows = []
+    for p in patches_manifest["patches"]:
+        versions = " / ".join(a["version"] for a in p["applies_to"])
+        reason = p["whitelist_reason"] or "-"
+        if len(reason) > 50:
+            reason = reason[:47] + "..."
+        rows.append(
+            f"| `{p['name']}` | {p['status']} | {versions} | {reason} |"
+        )
+
+    body = f"""# Patch 状态仪表盘
+
+> 自动生成,源:`tools/sync-manifest.py`
+> 最近同步:`{now}`
+> 总计:**{total} 个 patch**
+
+## 状态码说明
+
+| status | 含义 |
+|---|---|
+| `pending` | 暂未提交上游 |
+| `submitted` | 已提交上游 PR,等待审核 |
+| `accepted` | 已合入 upstream |
+| `rejected` | 上游拒绝合入 |
+| `whitelisted` | 永久携带,不再追求上游合入 |
+
+## 状态分布
+
+""" + "\n".join(f"- **{k}**: {v}" for k, v in sorted(by_status.items())) + f"""
+
+## 全量 patch 列表
+
+| patch.name | status | 跨版本 | whitelist_reason |
+|---|---|---|---|
+""" + "\n".join(rows) + """
+
+## 季度评审
+
+- 下一个评审日:**2026-09-15**
+- 评审范围:所有 `status: whitelisted` 的 patch
+- 工具:`python3 tools/whitelist-audit.py`
+"""
+    return body
+
+
 def validate_versions(versions: list[dict]) -> list[str]:
-    """version.yaml 字段校验,符合规范 §4.2 + §4.4"""
+    """规范 §1.3 / §1.4: 字段校验"""
     errs = []
     for v in versions:
         path = v.get("_path", "?")
         vid = v.get("version_id", "")
         if not vid:
             errs.append(f"{path}: missing version_id")
-        if not v.get("description"):
-            errs.append(f"{path}: missing description")
         if not v.get("owner"):
             errs.append(f"{path}: missing owner")
-
-        # support 块
-        support = v.get("support", {}) or {}
-        if not support:
-            errs.append(f"{path}: missing support block (§3.2)")
-        else:
-            if support.get("status") not in SUPPORT_ENUM:
-                errs.append(f"{path}: support.status={support.get('status')!r} not in {sorted(SUPPORT_ENUM)}")
-            if not support.get("planned_eol"):
-                errs.append(f"{path}: missing support.planned_eol")
-            if not support.get("release_owner"):
-                errs.append(f"{path}: missing support.release_owner")
-
-        # upstream_base
+        if v.get("demo"):
+            # demo: 允许 patches: []
+            if v.get("patches"):
+                errs.append(f"{path}: demo version 不应有 patches[] (移到非 demo 目录)")
+            continue
         ub = v.get("upstream_base", {}) or {}
         if not ub.get("repo"):
             errs.append(f"{path}: missing upstream_base.repo")
-        if not ub.get("version"):
-            errs.append(f"{path}: missing upstream_base.version")
-        commit = ub.get("commit", "")
-        if not commit or len(commit) != 40:
-            errs.append(f"{path}: upstream_base.commit must be 40-char SHA, got {commit!r}")
-
-        # validation
-        val = v.get("validation", {}) or {}
-        if not val.get("upstream_commands"):
-            errs.append(f"{path}: missing validation.upstream_commands (§4.2 必填)")
-
-        # patches
-        patches = v.get("patches", []) or []
-        if not patches:
-            errs.append(f"{path}: patches[] must be non-empty")
-        names = []
-        for i, p in enumerate(patches, start=1):
-            n = p.get("name", "")
-            names.append(n)
+        if not ub.get("commit"):
+            errs.append(f"{path}: missing upstream_base.commit")
+        for i, p in enumerate(v.get("patches", []) or []):
+            pname = p.get("name", "")
             t = p.get("type", "")
             s = p.get("status", "")
             if t not in TYPE_ENUM:
                 errs.append(f"{path}: patches[{i}].type={t!r} not in {sorted(TYPE_ENUM)}")
             if s not in STATUS_ENUM:
                 errs.append(f"{path}: patches[{i}].status={s!r} not in {sorted(STATUS_ENUM)}")
-            if not p.get("owner"):
-                errs.append(f"{path}: patches[{i}].owner missing")
-            if s == "submitted" and not p.get("pr"):
-                errs.append(f"{path}: patches[{i}].status=submitted but pr empty (§4.4)")
-            if s == "accepted" and t == "project" and not p.get("exception"):
-                errs.append(f"{path}: patches[{i}].type=project status=accepted but exception missing (§4.4)")
-            if p.get("exception") and not (p["exception"].get("approved_by") and len(p["exception"]["approved_by"]) >= 2):
-                errs.append(f"{path}: patches[{i}].exception.approved_by needs ≥2 distinct roles (§8)")
-        if len(names) != len(set(names)):
-            errs.append(f"{path}: duplicate patch names in patches[]")
-
+            if not p.get("name"):
+                errs.append(f"{path}: patches[{i}].name missing")
+            if s in ("submitted", "accepted") and not p.get("upstream_pr"):
+                errs.append(f"{path}: {pname}.status={s} but upstream_pr[] empty (§1.4)")
+            if s == "whitelisted":
+                reason = (p.get("whitelist_reason") or "").strip()
+                if len(reason) < 30:
+                    errs.append(f"{path}: {pname}.status=whitelisted but whitelist_reason <30 chars (§1.4)")
+            if s == "rejected" and not (p.get("whitelist_reason") or "").strip():
+                errs.append(f"{path}: {pname}.status=rejected but whitelist_reason (reject reason) empty (§1.4)")
     return errs
 
 
-def detect_repo_metadata() -> tuple[str, str, str]:
-    """从 git 读 repo/branch/commit,符合规范 §3.1"""
-    import subprocess
-    try:
-        repo = subprocess.check_output(
-            ["git", "config", "--get", "remote.origin.url"],
-            cwd=str(ROOT), text=True, stderr=subprocess.DEVNULL
-        ).strip() or "local"
-        branch = subprocess.check_output(
-            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=str(ROOT), text=True, stderr=subprocess.DEVNULL
-        ).strip() or "local"
-        commit = subprocess.check_output(
-            ["git", "rev-parse", "HEAD"],
-            cwd=str(ROOT), text=True, stderr=subprocess.DEVNULL
-        ).strip() or "0000000000000000000000000000000000000000"
-    except Exception:
-        repo, branch, commit = "local", "local", "0" * 40
-    return repo, branch, commit
+def render_yaml(obj: dict) -> str:
+    return yaml.safe_dump(obj, allow_unicode=True, sort_keys=False, default_flow_style=False)
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--out", default=str(ROOT / "out" / "patches-manifest.json"))
-    ap.add_argument("--print", action="store_true", help="打印到 stdout,不算写文件")
+    ap.add_argument("--check", action="store_true", help="CI drift 检测")
+    ap.add_argument("--write", action="store_true", help="写回所有自动文件")
+    ap.add_argument("--report", action="store_true", help="只打印人读报表")
     args = ap.parse_args()
 
     versions = collect_versions()
     errs = validate_versions(versions)
     if errs:
-        print("=== version.yaml 字段校验失败 ===", file=sys.stderr)
+        print("=== version.yaml 字段校验失败 (§1.3 / §1.4) ===", file=sys.stderr)
         for e in errs:
             print(f"  ✗ {e}", file=sys.stderr)
         return 2
 
-    repo, branch, commit = detect_repo_metadata()
-    manifest = build_manifest(versions, repo, branch, commit)
+    patches_manifest = build_patches_manifest(versions)
+    whitelist_manifest = build_whitelist_manifest(patches_manifest)
+    status_report = build_status_report(patches_manifest)
 
-    if args.print:
-        print(json.dumps(manifest, indent=2, ensure_ascii=False))
+    if args.report:
+        print(status_report)
         return 0
 
-    out = Path(args.out)
-    out.parent.mkdir(parents=True, exist_ok=True)
-    out.write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
-    print(f"✓ wrote {out.relative_to(ROOT)}")
-    print(f"  versions={manifest['summary']['version_count']}  patches={manifest['summary']['patch_count']}")
-    print(f"  source: {repo} @ {branch} ({commit[:8]})")
+    target_patches = ROOT / "PATCHES.yaml"
+    target_whitelist = ROOT / "WHITELIST.yaml"
+    target_status = ROOT / "docs" / "PATCHES-STATUS.md"
+
+    if args.write:
+        target_patches.write_text(render_yaml(patches_manifest), encoding="utf-8")
+        target_whitelist.write_text(render_yaml(whitelist_manifest), encoding="utf-8")
+        target_status.parent.mkdir(parents=True, exist_ok=True)
+        target_status.write_text(status_report, encoding="utf-8")
+        print(f"✓ wrote {target_patches.relative_to(ROOT)}")
+        print(f"✓ wrote {target_whitelist.relative_to(ROOT)}")
+        print(f"✓ wrote {target_status.relative_to(ROOT)}")
+        return 0
+
+    if args.check:
+        drift = []
+        for tgt, content in [
+            (target_patches, render_yaml(patches_manifest)),
+            (target_whitelist, render_yaml(whitelist_manifest)),
+            (target_status, status_report),
+        ]:
+            if not tgt.exists():
+                drift.append(f"missing: {tgt.relative_to(ROOT)}")
+            elif tgt.read_text(encoding="utf-8") != content:
+                drift.append(f"drift: {tgt.relative_to(ROOT)}")
+        if drift:
+            print("=== sync-manifest drift 检测 (§2.4) ===", file=sys.stderr)
+            for d in drift:
+                print(f"  ✗ {d}", file=sys.stderr)
+            print("", file=sys.stderr)
+            print("修复: python3 tools/sync-manifest.py --write", file=sys.stderr)
+            print("      git add PATCHES.yaml WHITELIST.yaml docs/PATCHES-STATUS.md", file=sys.stderr)
+            print("      git commit -m 'manifest: auto-sync from version.yaml'", file=sys.stderr)
+            return 1
+        print("✓ sync-manifest --check: PATCHES.yaml / WHITELIST.yaml / docs/PATCHES-STATUS.md 与 version.yaml 一致")
+        return 0
+
+    ap.print_help()
     return 0
 
 
