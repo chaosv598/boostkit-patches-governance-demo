@@ -218,6 +218,18 @@ def render_yaml(obj: dict) -> str:
     return yaml.safe_dump(obj, allow_unicode=True, sort_keys=False, default_flow_style=False)
 
 
+def strip_volatile(obj):
+    """去掉 _warning / generated_at 等不稳定字段,用于 --check 比对。
+
+    规范 §2.4: 校验只看结构与字段值是否一致,不看时间戳(否则每次 CI 必 drift)。
+    """
+    if isinstance(obj, dict):
+        return {k: strip_volatile(v) for k, v in obj.items() if k not in {"generated_at"}}
+    if isinstance(obj, list):
+        return [strip_volatile(v) for v in obj]
+    return obj
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--check", action="store_true", help="CI drift 检测")
@@ -256,16 +268,32 @@ def main():
         return 0
 
     if args.check:
+        # 规范 §2.4: 校验结构与字段一致性,不看时间戳(否则每次 CI 必 drift)
         drift = []
         for tgt, content in [
-            (target_patches, render_yaml(patches_manifest)),
-            (target_whitelist, render_yaml(whitelist_manifest)),
-            (target_status, status_report),
+            (target_patches, render_yaml(strip_volatile(patches_manifest))),
+            (target_whitelist, render_yaml(strip_volatile(whitelist_manifest))),
         ]:
             if not tgt.exists():
                 drift.append(f"missing: {tgt.relative_to(ROOT)}")
-            elif tgt.read_text(encoding="utf-8") != content:
-                drift.append(f"drift: {tgt.relative_to(ROOT)}")
+            else:
+                # 现有文件也剥掉 generated_at 再比
+                try:
+                    existing = yaml.safe_load(tgt.read_text(encoding="utf-8"))
+                except Exception:
+                    drift.append(f"parse error: {tgt.relative_to(ROOT)}")
+                    continue
+                existing_norm = yaml.safe_dump(strip_volatile(existing), allow_unicode=True, sort_keys=False)
+                if existing_norm != content:
+                    drift.append(f"drift: {tgt.relative_to(ROOT)}")
+        # docs/PATCHES-STATUS.md 是人读报告,只比除去 "最近同步" 行的内容
+        if not target_status.exists():
+            drift.append(f"missing: {target_status.relative_to(ROOT)}")
+        else:
+            cur_lines = [l for l in target_status.read_text(encoding="utf-8").splitlines() if not l.startswith("> 最近同步")]
+            new_lines = [l for l in status_report.splitlines() if not l.startswith("> 最近同步")]
+            if "\n".join(cur_lines) != "\n".join(new_lines):
+                drift.append(f"drift: {target_status.relative_to(ROOT)}")
         if drift:
             print("=== sync-manifest drift 检测 (§2.4) ===", file=sys.stderr)
             for d in drift:
@@ -275,7 +303,7 @@ def main():
             print("      git add PATCHES.yaml WHITELIST.yaml docs/PATCHES-STATUS.md", file=sys.stderr)
             print("      git commit -m 'manifest: auto-sync from version.yaml'", file=sys.stderr)
             return 1
-        print("✓ sync-manifest --check: PATCHES.yaml / WHITELIST.yaml / docs/PATCHES-STATUS.md 与 version.yaml 一致")
+        print("✓ sync-manifest --check: PATCHES.yaml / WHITELIST.yaml / docs/PATCHES-STATUS.md 与 version.yaml 一致 (忽略时间戳)")
         return 0
 
     ap.print_help()
