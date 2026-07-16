@@ -47,3 +47,12 @@ patches:
       - https://github.com/redis/redis/pull/13579
     whitelist_reason: ""
     dependence: []
+
+  - name: 0005-test-fake-noop
+    title: Fake patch for build-perf pipeline validation (no-op)
+    owner: chaosv598@boostkit
+    type: project
+    status: pending
+    upstream_pr: []
+    whitelist_reason: ""
+    dependence: []

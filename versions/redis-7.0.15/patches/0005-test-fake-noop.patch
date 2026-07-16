@@ -1,0 +1,28 @@
+From a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0 Mon Sep 17 00:00:00 2001
+From: chaosv598 <chaosv598@boostkit>
+Date: Thu, 16 Jul 2026 19:50:00 +0800
+Subject: [PATCH] redis-7.0.15-test-fake-noop
+
+Fake no-op patch for build-perf pipeline validation.
+Inserts a single comment line into redis.conf header.
+Does not change runtime behavior.
+
+---
+ redis.conf | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/redis.conf b/redis.conf
+index 0431c3742..a1b2c3d4e 100644
+--- a/redis.conf
++++ b/redis.conf
+@@ -1,4 +1,5 @@
+ # Redis configuration file example.
+ #
++# boostkit-test: fake patch to validate build-perf pipeline (do not review)
+ # Note that in order to read the configuration file, Redis must be
+ # started with the file path as first argument:
+ #
+--
+
+
+2.34.1
