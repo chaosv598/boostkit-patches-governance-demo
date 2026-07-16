@@ -11,8 +11,8 @@
 |---|---|
 | 开发者契约 | `versions/<v>/version.yaml`(一版本一 yaml,patches 用数组) |
 | 自动派生 | `PATCHES.yaml` / `WHITELIST.yaml` / `docs/PATCHES-STATUS.md`(sync-manifest 写,**禁手改**) |
-| 本地工具 | `verify.sh` + `sync-manifest.py` + `whitelist-audit.py` + `upstream-lint.sh`(+ `build-perf.sh` 可选) |
-| CI 工作流 | `ci.yml`(6 阶段门禁,含 drift auto-fix)+ `build-perf.yml`(改 patch 自动触发) |
+| 本地工具 | `verify.sh` + `sync-manifest.py` + `whitelist-audit.py`(+ `build-perf.sh` 可选) |
+| CI 工作流 | `ci.yml`(5 阶段门禁,含 drift auto-fix)+ `build-perf.yml`(改 patch 自动触发) |
 | Patch 状态 | **5** 个:`pending` / `submitted` / `accepted` / `rejected` / `whitelisted` |
 | Patch 分类 | `type=ecological`(推上游合入)/ `type=project`(本仓独享) |
 | 单一交付面 | `master`(只接受 PR,禁直推) |
@@ -37,7 +37,7 @@
 
 ### 1.4 master = 单一交付面
 
-`master` 永远只通过 PR 进入;不接受直推。CI 6 阶段绿才允许 merge。
+`master` 永远只通过 PR 进入;不接受直推。CI 5 阶段绿才允许 merge。
 
 ---
 
@@ -73,8 +73,7 @@ whitelisted(走 whitelist_reason ≥30 字符 描述永久保留理由)
 |---|---|---|---|
 | `tools/verify.sh` | bash | 仓根禁放 + yaml 字段 + patches[] 一致 + upstream apply dry-run | 改完本地必跑 + CI 第 3 阶段 |
 | `tools/sync-manifest.py` | python | version.yaml → PATCHES.yaml / WHITELIST.yaml / docs/PATCHES-STATUS.md(派生) | `--check` CI 第 1 阶段 / `--write` CI drift 时自动跑 |
-| `tools/whitelist-audit.py` | python | 白名单 reason 字数 + 季度评审提醒 | `--strict` CI 第 6 阶段 + 季度手动跑 |
-| `tools/upstream-lint.sh` | bash | trailing-ws / CRLF / tab-width / subject 长度检查 | CI 第 5 阶段 + 改 patch 文件时本地跑 |
+| `tools/whitelist-audit.py` | python | 白名单 reason 字数 + 季度评审提醒 | `--strict` CI 第 5 阶段 + 季度手动跑 |
 | `tools/build-perf.sh` | bash | 真实编译 + memtier_benchmark 性能基准 | 可选本地复现 + CI `build-perf.yml` |
 
 **为什么 sync-manifest.py 是核心**:它是**把 yaml 契约「翻译」成机器视图(WHITELIST.yaml)和人视图(PATCHES-STATUS.md)的唯一通道**。没有它,YAML 改了视图不会自动跟。
@@ -83,7 +82,7 @@ whitelisted(走 whitelist_reason ≥30 字符 描述永久保留理由)
 
 ## 4. CI 工作流
 
-### 4.1 `ci.yml`(6 阶段门禁)
+### 4.1 `ci.yml`(5 阶段门禁)
 
 ```
 PR opened / push master
@@ -94,8 +93,7 @@ PR opened / push master
 [2] verify.sh (字段 + apply dry-run)
 [3] verify.sh (仓根禁放)
 [4] verify.sh (patches[] vs patches/ 一致)
-[5] upstream-lint (trailing-ws / CRLF)
-[6] whitelist-audit --strict
+[5] whitelist-audit --strict
     ↓ 全部绿
 允许 merge
 ```
@@ -154,7 +152,7 @@ PR opened / push master
 | simplify-v1 | 6 | 5 | 一 patch 一 yaml | 1 |
 | simplify-v2 | 4 | 5 | 一 patch 一 yaml | 1 |
 | simplify-v3 | 1 | 3 | 一版本一 yaml | 1 |
-| **当前(v2 spec 落地版)** | **5** | **5** | **一版本一 yaml** | **ci.yml 6 阶段 + build-perf.yml** |
+| **当前(v2 spec 落地版)** | **5** | **5** | **一版本一 yaml** | **ci.yml 5 阶段 + build-perf.yml** |
 
 > 简化过程快照(`1 工具 + 3 状态 + 1 CI job`)见 `docs/_archive/simplify-v3/`,仅作历史参考。
 

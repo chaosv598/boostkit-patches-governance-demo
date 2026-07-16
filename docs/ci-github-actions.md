@@ -1,7 +1,7 @@
 # CI —— GitHub Actions 配置
 
-> **本文档**:`ci.yml` 6 阶段 + `build-perf.yml` 改 patch 自动触发。
-> **配套脚本**:`tools/verify.sh` / `tools/sync-manifest.py` / `tools/whitelist-audit.py` / `tools/upstream-lint.sh` / `tools/build-perf.sh`。
+> **本文档**:`ci.yml` 5 阶段 + `build-perf.yml` 改 patch 自动触发。
+> **配套脚本**:`tools/verify.sh` / `tools/sync-manifest.py` / `tools/whitelist-audit.py` / `tools/build-perf.sh`。
 > **设计原理**:`docs/GOVERNANCE.md §4`。
 > **历史版本**:`docs/_archive/simplify-v3/ci-github-actions.md`(1 job 时代,已弃用)。
 
@@ -12,7 +12,7 @@
 | 维度 | 取值 |
 |---|---|
 | 工作流 | 2 个:`ci.yml`(必跑)+ `build-perf.yml`(改 patch 才跑) |
-| ci.yml 阶段 | **6**:`sync-check` / `auto-fix drift` / `verify` / `upstream-lint` / `whitelist-audit` |
+| ci.yml 阶段 | **5**:`sync-check` / `auto-fix drift` / `verify` / `whitelist-audit` |
 | build-perf 触发 | `dorny/paths-filter` 检测 `versions/<v>/**` 改动 |
 | 触发器 | `push master` / `pull_request` / `workflow_dispatch` |
 | 并发控制 | `cancel-in-progress: true`(同 PR 新 push 取消旧 run) |
@@ -20,7 +20,7 @@
 
 ---
 
-## 1. `ci.yml` —— 6 阶段门禁
+## 1. `ci.yml` —— 5 阶段门禁
 
 ### 1.1 工作流文件
 
@@ -71,14 +71,11 @@ jobs:
       # 2-4. verify.sh 4 阶段(仓根禁放 + 字段 + 一致性 + apply dry-run)
       - run: bash tools/verify.sh
 
-      # 5. upstream-lint
-      - run: bash tools/upstream-lint.sh versions/*/patches/*.patch
-
-      # 6. whitelist audit
+      # 5. whitelist audit
       - run: python3 tools/whitelist-audit.py --strict
 ```
 
-### 1.2 6 阶段流程图
+### 1.2 5 阶段流程图
 
 ```
 PR opened / push master
@@ -91,9 +88,7 @@ drift=true? ──── 是 ──▶ [1.5] --write + commit + push [skip ci]
     ↓ 否
 [2-4] verify.sh (仓根禁放 / yaml 字段 / patches[] 一致性 / upstream apply dry-run)
     ↓
-[5] upstream-lint (trailing-ws / CRLF / tab-width / subject 长度)
-    ↓
-[6] whitelist-audit --strict (reason 字数 + 季度评审)
+[5] whitelist-audit --strict (reason 字数 + 季度评审)
     ↓ 全部绿
 ✅ 允许 merge
 ```
@@ -104,8 +99,7 @@ drift=true? ──── 是 ──▶ [1.5] --write + commit + push [skip ci]
 |---|---|
 | [1] drift | 自动修复 + push,**不 block** |
 | [2-4] verify.sh 任一硬错 | **block merge** |
-| [5] upstream-lint | **block merge** |
-| [6] whitelist-audit | **block merge**(reason <30 字符) |
+| [5] whitelist-audit | **block merge**(reason <30 字符) |
 | verify.sh 单 patch apply 失败 | **warn 不 block**(owner 检查 baseline) |
 
 ---
@@ -172,7 +166,7 @@ filters: |
 | 跑的内容 | dry-run `git apply --check` | 真的 `make` + 启 redis + 跑 memtier |
 | 时长 | ~30s(CI) | ~2-3min |
 | 触发 | 所有 PR + push master | 仅改 patch 的 PR |
-| 失败 | 6 阶段任一 fail 即 block | build fail block;bench warn 不 block |
+| 失败 | 5 阶段任一 fail 即 block | build fail block;bench warn 不 block |
 | 报告 | pass/fail | markdown + memtier log artifact |
 
 **判断标准**:
@@ -215,6 +209,6 @@ filters: |
 |---|---|---|---|
 | 治理前 | 无 | 0 | — |
 | simplify-v3(已弃用) | ci.yml | 1 个 job:`verify` | push/PR |
-| **当前** | ci.yml + build-perf.yml | **ci 6 阶段** + build-perf 2 job | push/PR + paths-filter |
+| **当前** | ci.yml + build-perf.yml | **ci 5 阶段** + build-perf 2 job | push/PR + paths-filter |
 
 > simplify-v3 的 `ci-github-actions.md` 见 `docs/_archive/simplify-v3/`,仅作历史参考。

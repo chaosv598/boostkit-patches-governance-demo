@@ -33,15 +33,14 @@ Kunpeng BoostKit Redis
 │           ├── 0002-perf-kunpeng-adapt-dtoe.patch
 │           ├── 0003-perf-jemalloc-arm64-pointer-tag-and-gc.patch
 │           └── 0004-perf-rdb-fallback-aof.patch
-├── tools/                        # 5 个工具:verify.sh / sync-manifest.py / whitelist-audit.py / upstream-lint.sh / build-perf.sh
+├── tools/                        # 4 个工具:verify.sh / sync-manifest.py / whitelist-audit.py / build-perf.sh
 ├── PATCHES.yaml                  # 自动生成(机器读,跨版本聚合)
 ├── WHITELIST.yaml                # 自动生成(白名单视图)
-├── .github/workflows/ci.yml      # ci.yml:6 阶段门禁
+├── .github/workflows/ci.yml      # ci.yml:5 阶段门禁
 ├── .github/workflows/build-perf.yml  # build-perf.yml:改 patch 自动触发
 └── docs/
     ├── DEVELOPER-GUIDE.md        # 5 分钟上手(开发者必读)
     ├── GOVERNANCE.md             # 治理总纲(设计原理)
-    ├── ONBOARDING.md             # 新人 onboarding
     ├── patch-lifecycle.md        # 元数据 + 5 状态机
     ├── ci-github-actions.md      # CI 配置 + build-perf
     ├── PATCHES-STATUS.md         # 自动生成(人读仪表盘)
@@ -137,10 +136,9 @@ make -j
 | 文档 | 用途 | 何时读 |
 |---|---|---|
 | [docs/DEVELOPER-GUIDE.md](docs/DEVELOPER-GUIDE.md) | 5 分钟上手 + PR 全流程 + 工具调用 | 第一次提 PR 前**必读** |
-| [docs/GOVERNANCE.md](docs/GOVERNANCE.md) | 治理总纲：5 状态机 / 5 工具 / 6 阶段 CI / 设计取舍 | 想理解「为什么这样设计」时 |
-| [docs/ONBOARDING.md](docs/ONBOARDING.md) | 新人 10 分钟 onboarding | 第一次接触本仓 |
+| [docs/GOVERNANCE.md](docs/GOVERNANCE.md) | 治理总纲：5 状态机 / 4 工具 / 5 阶段 CI / 设计取舍 | 想理解「为什么这样设计」时 |
 | [docs/patch-lifecycle.md](docs/patch-lifecycle.md) | 元数据格式 + 5 状态机 + 合法转换表 + 4 常见场景 | 改字段 / 改状态 / 新增 patch 时 |
-| [docs/ci-github-actions.md](docs/ci-github-actions.md) | ci.yml 6 阶段流程图 + build-perf.yml 触发逻辑 + 失败排查 | CI 出问题或要排查构建性能时 |
+| [docs/ci-github-actions.md](docs/ci-github-actions.md) | ci.yml 5 阶段流程图 + build-perf.yml 触发逻辑 + 失败排查 | CI 出问题或要排查构建性能时 |
 
 > 完整规范见仓外文档 `D:\AI\github_cli\BoostKit-Patch-Governance-Spec-v2.md`（总—分架构总纲）。
 

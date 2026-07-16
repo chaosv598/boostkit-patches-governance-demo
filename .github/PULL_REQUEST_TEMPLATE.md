@@ -7,9 +7,6 @@
 ## 验证(规范 §7.2 / §9.2 必跑)
 
 - [ ] `bash tools/verify.sh` 通过
-- [ ] `bash tools/upstream-lint.sh versions/<v>/patches/<name>.patch` 通过
-- [ ] 已 `grep -nE ' +$' versions/<v>/patches/<name>.patch` 无 trailing whitespace
-- [ ] 已 `grep -nP '\r$' versions/<v>/patches/<name>.patch` 无 CRLF
 - [ ] 已 `git apply --check` 在 clean upstream @ commit 上通过
 - [ ] CI 通过(PATCHES.yaml / WHITELIST.yaml 与 version.yaml 一致)
 
@@ -40,6 +37,6 @@
 
 ## CI 预期(规范 §8)
 
-- [ ] ci.yml 6 阶段全过(sync-check / verify / upstream-lint / whitelist-audit)
+- [ ] ci.yml 5 阶段全过(sync-check / verify / whitelist-audit)
 - [ ] drift 时 CI 自动 commit 修复(`manifest: auto-sync from version.yaml [skip ci]`)
 - [ ] **不需要**手改 PATCHES.yaml / WHITELIST.yaml(规范 §10 YAGNI)

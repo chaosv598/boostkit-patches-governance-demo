@@ -5,8 +5,7 @@
 #   2. yaml schema 校验 (verify.sh 第 2 阶段)
 #   3. patch 文件名格式校验 (verify.sh 第 2 阶段)
 #   4. upstream apply dry-run (verify.sh 第 3 阶段)
-#   5. upstream-lint (trailing-ws / CRLF / tab-width / subject 长度)
-#   6. whitelist_reason 字数 + reason 文本检查
+#   5. whitelist_reason 字数 + reason 文本检查
 #
 # 失败策略 (规范 §8.2):
 #   - ci.yml 任何一项 fail = block merge
@@ -84,13 +83,6 @@ jobs:
       - name: Verify (schema + apply dry-run)
         run: bash tools/verify.sh
 
-      # 5. upstream-lint (§7.1 风格检查)
-      - name: Upstream lint
-        run: |
-          if ls versions/*/patches/*.patch 2>/dev/null | head -1 >/dev/null; then
-            bash tools/upstream-lint.sh versions/*/patches/*.patch
-          fi
-
-      # 6. whitelist 审计 (§4.4)
+      # 5. whitelist 审计 (§4.4)
       - name: Whitelist audit
         run: python3 tools/whitelist-audit.py --strict

@@ -15,8 +15,8 @@
 
 1. **唯一手写入口**:`versions/<v>/version.yaml` + `versions/<v>/patches/<name>.patch`
 2. **派生物不动手**:`PATCHES.yaml` / `WHITELIST.yaml` / `docs/PATCHES-STATUS.md` 全由 CI 写
-3. **本地必跑 4 工具**:`verify.sh` + `sync-manifest.py --check` + `whitelist-audit.py --strict` + `upstream-lint.sh`
-4. **CI 6 阶段全绿才允许 merge**;build-perf 改动 patch 才触发
+3. **本地必跑 3 工具**:`verify.sh` + `sync-manifest.py --check` + `whitelist-audit.py --strict`
+4. **CI 5 阶段全绿才允许 merge**;build-perf 改动 patch 才触发
 5. **5 状态机**:`pending` / `submitted` / `accepted` / `rejected` / `whitelisted`
 
 ### §A.2 准备环境(2 分钟)
@@ -66,13 +66,13 @@ gh pr create --title "docs(0003): mark as accepted (onboarding demo)" \
   --body-file .github/PULL_REQUEST_TEMPLATE.md
 ```
 
-PR 页面右下角 GitHub Actions 应跑 ci.yml 6 阶段,全部 ✅;merge 后 PATCHES.yaml / WHITELIST.yaml 会自动更新(sync-manifest 在 post-merge 也会跑)。🎉 完成。
+PR 页面右下角 GitHub Actions 应跑 ci.yml 5 阶段,全部 ✅;merge 后 PATCHES.yaml / WHITELIST.yaml 会自动更新(sync-manifest 在 post-merge 也会跑)。🎉 完成。
 
 ### §A.4 完成清单(新人 check)
 
 - [ ] 克隆仓 + 跑 `verify.sh` + `sync-manifest.py --check` 看到绿
-- [ ] 改一个 patch 的 status,本地 4 工具全过
-- [ ] commit + push + 开 PR + 等 CI 6 阶段全绿
+- [ ] 改一个 patch 的 status,本地 3 工具全过
+- [ ] commit + push + 开 PR + 等 CI 5 阶段全绿
 - [ ] squash merge
 - [ ] 跑 sync-manifest --check 在 master 上看到 PATCHES.yaml / WHITELIST.yaml 已自动更新
 
@@ -85,8 +85,8 @@ PR 页面右下角 GitHub Actions 应跑 ci.yml 6 阶段,全部 ✅;merge 后 PA
 | 开发者契约 | `versions/<v>/version.yaml`(一版本一 yaml) |
 | Patch 文件 | `versions/<v>/patches/<name>.patch` |
 | 自动派生文件 | `PATCHES.yaml` / `WHITELIST.yaml` / `docs/PATCHES-STATUS.md`(**禁止手改**) |
-| 本地工具 | 4 个:`verify.sh` / `sync-manifest.py` / `whitelist-audit.py` / `upstream-lint.sh`(加 `build-perf.sh` 可选) |
-| CI 工作流 | `ci.yml`(6 阶段门禁)+ `build-perf.yml`(真实编译+压测) |
+| 本地工具 | 3 个必跑:`verify.sh` / `sync-manifest.py` / `whitelist-audit.py`(+ `build-perf.sh` 可选) |
+| CI 工作流 | `ci.yml`(5 阶段门禁)+ `build-perf.yml`(真实编译+压测) |
 | Patch 状态 | 5 个:`pending` / `submitted` / `accepted` / `rejected` / `whitelisted` |
 | Patch 分类 | `type=ecological`(推上游合入)/ `type=project`(本仓独享) |
 
@@ -149,14 +149,13 @@ whitelisted(走 exception 块,不进 patches.status)
 
 ---
 
-## 2. 4 个本地工具
+## 2. 3 个本地工具
 
 ```bash
 bash tools/verify.sh                 # 字段 + 一致性 + upstream apply dry-run
 python3 tools/sync-manifest.py --check   # drift 检测(也跑在 CI)
 python3 tools/sync-manifest.py --write   # 写回 PATCHES.yaml / WHITELIST.yaml / docs/PATCHES-STATUS.md
 python3 tools/whitelist-audit.py --strict # 白名单审计
-bash tools/upstream-lint.sh versions/<v>/patches/<name>.patch  # trailing-ws / CRLF / subject 长度
 bash tools/build-perf.sh all <v>    # 可选:本地真编 + 跑 memtier_benchmark
 ```
 
@@ -204,7 +203,6 @@ $EDITOR versions/redis-7.0.15/patches/0005-fix-memory-leak.patch
 bash tools/verify.sh                       # 字段 + 一致性 + apply
 python3 tools/sync-manifest.py --check     # drift(改完 yaml 必跑)
 python3 tools/whitelist-audit.py --strict  # 白名单
-bash tools/upstream-lint.sh versions/<v>/patches/*.patch  # 可选,改 patch 文件时必跑
 ```
 
 期望输出:全部 `✓`,无 hard error。
@@ -225,12 +223,11 @@ git push -u origin feat/...
 gh pr create --title "feat(7.0.15): add ..." --body-file .github/PULL_REQUEST_TEMPLATE.md
 ```
 
-CI(`ci.yml`)会跑 6 阶段,期望全部绿:
+CI(`ci.yml`)会跑 5 阶段,期望全部绿:
 
 ```
 ✓ Sync manifest check       drift=false (或 CI 自动 commit 修复)
 ✓ Verify (schema + apply)   verify.sh 全过
-✓ Upstream lint              无 trailing-ws / CRLF / 过长 subject
 ✓ Whitelist audit            reason 字数合格
 ```
 
@@ -322,4 +319,4 @@ $EDITOR versions/redis-7.0.16/version.yaml
 - [ ] 在 `version.yaml` 改一个 patch 的 status,跑 `sync-manifest.py --check` 看到绿
 - [ ] 跑 `sync-manifest.py --write`,看 PATCHES.yaml / WHITELIST.yaml / docs/PATCHES-STATUS.md 自动更新
 - [ ] 新增一个 patch 文件 + yaml 条目,本地全过
-- [ ] 开 PR → CI 6 阶段全绿 → squash merge
+- [ ] 开 PR → CI 5 阶段全绿 → squash merge
