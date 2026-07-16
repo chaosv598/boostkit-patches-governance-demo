@@ -2,6 +2,79 @@
 
 > **目的**:让第一次接触本仓的开发者,5 分钟内能改一处、跑通本地校验、开 PR、CI 绿、合并。
 > **核心目标**:开发者只编辑 `versions/<v>/version.yaml` + `versions/<v>/patches/<name>.patch`,其他文件都自动派生。
+> **阅读路径**:完全新人 → 读下面「§A 新人 5 分钟快路径」走一遍;有经验 → 直接跳「§0 30 秒速读」+ 遇到问题回头查细节。
+
+---
+
+## §A. 新人 5 分钟快路径
+
+> **适用对象**:第一次接触本仓的开发者(假设你会 git + GitHub + bash 基础)。
+> **目标**:5 分钟铺垫 + 5 分钟实操,完成你的第一个 PR。
+
+### §A.1 5 分钟铺垫:5 件事先记牢
+
+1. **唯一手写入口**:`versions/<v>/version.yaml` + `versions/<v>/patches/<name>.patch`
+2. **派生物不动手**:`PATCHES.yaml` / `WHITELIST.yaml` / `docs/PATCHES-STATUS.md` 全由 CI 写
+3. **本地必跑 4 工具**:`verify.sh` + `sync-manifest.py --check` + `whitelist-audit.py --strict` + `upstream-lint.sh`
+4. **CI 6 阶段全绿才允许 merge**;build-perf 改动 patch 才触发
+5. **5 状态机**:`pending` / `submitted` / `accepted` / `rejected` / `whitelisted`
+
+### §A.2 准备环境(2 分钟)
+
+```bash
+git clone https://github.com/chaosv598/boostkit-patches-governance-demo.git
+cd boostkit-patches-governance-demo
+pip install pyyaml
+bash tools/verify.sh                  # 应看到全部 ✓
+python3 tools/sync-manifest.py --check   # 应看到 sync-manifest 一致
+```
+
+两个工具都退出码 0 即可继续。如果 `verify.sh` 报 `apply 失败(单 patch)` 是正常的 warning(网络/版本漂移),不阻塞。
+
+### §A.3 5 分钟实操:改一个 patch 的状态
+
+**目标**:把 `redis-7.0.15/0003-perf-jemalloc-arm64-pointer-tag-and-gc` 从 `submitted` 改成 `accepted`(假装上游已 merge)。
+
+```bash
+git checkout master && git pull
+git checkout -b docs/onboarding-demo
+```
+
+打开 `versions/redis-7.0.15/version.yaml`,找到 0003 那一条:
+
+```diff
+   - name: 0003-perf-jemalloc-arm64-pointer-tag-and-gc
+     title: Adapt jemalloc 5.2.1 ARM64 pointer-tag and GC strategy optimize
+     owner: yinbin@boostkit
+     type: ecological
+-    status: submitted
++    status: accepted
+     upstream_pr:
+       - https://github.com/redis/jemalloc/pull/9876
+```
+
+```bash
+# 本地校验
+bash tools/verify.sh                       # 字段 + 一致性 + apply
+python3 tools/sync-manifest.py --check     # drift 检测
+
+# commit + push + PR
+git add versions/redis-7.0.15/version.yaml
+git commit -m "docs(0003): mark as accepted (onboarding demo)"
+git push -u origin docs/onboarding-demo
+gh pr create --title "docs(0003): mark as accepted (onboarding demo)" \
+  --body-file .github/PULL_REQUEST_TEMPLATE.md
+```
+
+PR 页面右下角 GitHub Actions 应跑 ci.yml 6 阶段,全部 ✅;merge 后 PATCHES.yaml / WHITELIST.yaml 会自动更新(sync-manifest 在 post-merge 也会跑)。🎉 完成。
+
+### §A.4 完成清单(新人 check)
+
+- [ ] 克隆仓 + 跑 `verify.sh` + `sync-manifest.py --check` 看到绿
+- [ ] 改一个 patch 的 status,本地 4 工具全过
+- [ ] commit + push + 开 PR + 等 CI 6 阶段全绿
+- [ ] squash merge
+- [ ] 跑 sync-manifest --check 在 master 上看到 PATCHES.yaml / WHITELIST.yaml 已自动更新
 
 ---
 
