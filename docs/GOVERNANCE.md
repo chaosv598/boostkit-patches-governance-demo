@@ -1,273 +1,174 @@
-# Redis 治理后仓库说明
+# 仓治理总纲 —— 设计原理
 
-> **目的**:让第一次接触本仓的开发者,5 分钟内能上手。
-> **本仓**: `chaosv598/Redis-mvp-demo`(按 v5 MVP 简化版治理)
-> **核心目标**:**开发者愿意配合** — 1 个工具 + 一版本一 yaml + 1 个 CI job,够用就行。
+> **本文档**:讲清「为什么这样设计」;流程细节见 `DEVELOPER-GUIDE.md`。
+> **配套**:规范总—分架构在仓外 `D:\AI\github_cli\BoostKit-Patch-Governance-Spec-v2.md`。
 
 ---
 
 ## 0. 30 秒速读
 
-| 维度 | 数值 |
+| 维度 | 取值 |
 |---|---|
-| 仓文件总数 | ~10 个(原 ~95 个) |
-| 上游适配版本 | 2 个(redis-6.0.20, redis-7.0.15) |
-| patch 总数 | 5 个 |
-| 工具数 | **1 个**(`verify.sh`) |
-| 元数据 | **一版本一 yaml**(`version.yaml`),patches 用数组 |
-| CI job | **1 个** |
-| 验证耗时 | ~5 秒(本地) / ~30 秒(CI) |
-| lifecycle 工具 | **无**(状态写在 metadata 里,git history 即时间线) |
-| 退役/归档机制 | **无**(patch 永久保留,不日落) |
-| rebase 工具 | **无**(上游发新版由人工拷贝旧版本目录) |
-| 构建脚本 | **不文档化**(业务方按需自取) |
-
-**简化历程**:
-- 治理前:14 工具 + 7 状态机 + 13 字段 + 7 CI job,**对开发者重**
-- 治理前(中间): 6 工具 + 5 状态机 + 6 字段 + 1 CI job
-- **治理后(现在): 1 工具 + 3 状态 + 1 yaml/版本 + 1 CI job**
+| 开发者契约 | `versions/<v>/version.yaml`(一版本一 yaml,patches 用数组) |
+| 自动派生 | `PATCHES.yaml` / `WHITELIST.yaml` / `docs/PATCHES-STATUS.md`(sync-manifest 写,**禁手改**) |
+| 本地工具 | `verify.sh` + `sync-manifest.py` + `whitelist-audit.py` + `upstream-lint.sh`(+ `build-perf.sh` 可选) |
+| CI 工作流 | `ci.yml`(6 阶段门禁,含 drift auto-fix)+ `build-perf.yml`(改 patch 自动触发) |
+| Patch 状态 | **5** 个:`pending` / `submitted` / `accepted` / `rejected` / `whitelisted` |
+| Patch 分类 | `type=ecological`(推上游合入)/ `type=project`(本仓独享) |
+| 单一交付面 | `master`(只接受 PR,禁直推) |
 
 ---
 
-## 1. 整体目录结构
+## 1. 核心原则
 
-```
-Redis-mvp-demo/
-├── README.md / README_en.md       # 上游产品介绍(给最终用户,未动)
-├── LICENSE.txt                    # 上游 BSD 许可
-│
-├── versions/                      # ★ 每个上游版本一个子目录
-│   ├── redis-6.0.20/
-│   │   ├── version.yaml          #    唯一元数据(版本字段 + patches[])
-│   │   └── patches/0001-...patch #    实际补丁
-│   └── redis-7.0.15/
-│       └── (同上,4 个 patch)
-│
-├── tools/
-│   └── verify.sh                 # ★ 一键验证(本地 + CI 跑)
-│
-├── .github/
-│   ├── workflows/ci.yml           # ★ 1 个 CI job:verify
-│   └── PULL_REQUEST_TEMPLATE.md
-│
-└── docs/                          # 文档
-    ├── GOVERNANCE.md              # 本文档
-    ├── patch-lifecycle.md         # 状态机说明
-    ├── ci-github-actions.md       # CI 配置
-    └── zh/、en/                   # 上游产品文档(未动)
-```
+### 1.1 单一真相源
 
-- ✅ 现在: **没有 boostkit.yaml**、**没有 OWNERS 文件**、**没有 series 文件**、**没有 lifecycle/rebase/install-hooks/apply-and-build 工具**、**没有 retired/ 子目录**,只保留 `verify.sh` 一个 bash 脚本
+**开发者的唯一手写入口**:`versions/<v>/version.yaml` + `versions/<v>/patches/<name>.patch`。
+
+其他所有产物(PATCHES.yaml / WHITELIST.yaml / docs/PATCHES-STATUS.md)**全部由 CI 派生**,开发者不动手改;改了也会被覆盖。
+
+### 1.2 数组顺序 = apply 顺序
+
+`patches[]` 数组的**顺序就是 git apply 的顺序**。`dependence` 字段只作文档提示,verify.sh 不做拓扑校验,依赖关系靠「数组中靠前」自然形成。
+
+### 1.3 派生即真相(CI 自动修复)
+
+`sync-manifest.py --check` 在 CI 跑;检测到 drift,自动跑 `--write` + 自动 commit + 自动 push(带 `[skip ci]`)。**开发者无需关心派生物的同步**。
+
+### 1.4 master = 单一交付面
+
+`master` 永远只通过 PR 进入;不接受直推。CI 6 阶段绿才允许 merge。
 
 ---
 
-## 2. 元数据格式(一版本一 yaml)
+## 2. 5 状态机
 
-每个 `versions/<v>/version.yaml` 含 2 块:版本唯一字段 + patches 数组。
+```
+pending ──发上游PR──▶ submitted ──上游merge──▶ accepted
+   │                     │
+   │ type=project         │ 上游reject
+   ▼                     ▼
+accepted            rejected ◀── 也可改回 pending 重发
+   │
+   │ 永久携带(项目型 / 强硬件绑定)
+   ▼
+whitelisted(走 whitelist_reason ≥30 字符 描述永久保留理由)
+```
 
-### 2.1 版本字段(顶层)
-
-| 字段 | 必填 | 说明 |
+| status | 含义 | 必填字段 |
 |---|---|---|
-| `version_id` | ✅ | 唯一标识,跟目录名一致(如 `redis-7.0.15`) |
-| `description` | ✅ | 版本作用简介 |
-| `owner` | ✅ | 维护人邮箱 |
-| `upstream_base.repo` | ✅ | 上游仓库(verify.sh 拉此仓库) |
-| `upstream_base.version` | ✅ | 上游版本(tag) |
-| `upstream_base.commit` | ✅ | 上游 commit SHA(verify.sh checkout 这个) |
+| `pending` | patch 已加入但未发 PR | — |
+| `submitted` | 已发上游 PR,等审核 | `upstream_pr[]` ≥1 |
+| `accepted` | 上游已 merge / 本仓已落地 | `upstream_pr[]` ≥1(accepted ecological 时) |
+| `rejected` | 上游明确拒绝 | `whitelist_reason`(填拒绝原因) |
+| `whitelisted` | 永久携带,不再追求上游合入 | `whitelist_reason` ≥30 字符 |
 
-### 2.2 patches 数组
+详细字段说明见 `DEVELOPER-GUIDE.md §1` + `docs/PATCHES-NAMING.md` + `docs/WHITELIST-PROCESS.md`。
 
-`patches[]` 每个元素字段:
+---
 
-| 字段 | 必填 | 枚举/格式 | 说明 |
+## 3. 工具矩阵
+
+| 工具 | 类型 | 作用 | 何时跑 |
 |---|---|---|---|
-| `name` | ✅ | 字符串 | 文件名前缀(如 `0001-hw-kunpeng-adapt-iouring`) |
-| `title` | ✅ | 字符串 | patch 一句话作用 |
-| `owner` | ✅ | 邮箱 | 该 patch 负责人 |
-| `type` | ✅ | `ecological` / `project` | 生态型(需合入上游) / 项目型(本仓独享) |
-| `status` | ✅ | `pending` / `submitted` / `accepted` | 待合入 / 已发 PR / 已合入或本仓落地 |
-| `pr` | ⬜ | URL | type=ecological 且 status=submitted 时填 |
-| `note` | ⬜ | 文本 | 自由说明 |
-| `dependence` | ⬜ | 数组 | 依赖的其他 patch name(verify.sh 按数组顺序 apply,dependence 仅作提示) |
+| `tools/verify.sh` | bash | 仓根禁放 + yaml 字段 + patches[] 一致 + upstream apply dry-run | 改完本地必跑 + CI 第 3 阶段 |
+| `tools/sync-manifest.py` | python | version.yaml → PATCHES.yaml / WHITELIST.yaml / docs/PATCHES-STATUS.md(派生) | `--check` CI 第 1 阶段 / `--write` CI drift 时自动跑 |
+| `tools/whitelist-audit.py` | python | 白名单 reason 字数 + 季度评审提醒 | `--strict` CI 第 6 阶段 + 季度手动跑 |
+| `tools/upstream-lint.sh` | bash | trailing-ws / CRLF / tab-width / subject 长度检查 | CI 第 5 阶段 + 改 patch 文件时本地跑 |
+| `tools/build-perf.sh` | bash | 真实编译 + memtier_benchmark 性能基准 | 可选本地复现 + CI `build-perf.yml` |
 
-### 2.3 3 状态机
-
-```
-pending  →  submitted  →  accepted
-(刚加入)   (已发 PR)    (上游合入 / 项目型落地)
-```
-
-| 状态 | 含义 | 何时改 |
-|---|---|---|
-| `pending` | patch 已加入但尚未发 PR | 新建时默认 |
-| `submitted` | 已发上游 PR(type=ecological 时有意义) | PR URL 写到 `pr` 字段 |
-| `accepted` | 上游 merge / 项目型已在本仓落地 | 直接在 yaml 里改 `status` |
-
-> 状态变更**直接改 yaml 字段**即可,**没有专门的 lifecycle 工具**。`git log` 即完整时间线。
-
-### 2.4 apply 顺序
-
-**`patches[]` 数组顺序 = apply 顺序**。`dependence` 字段是提示性文档,verify.sh 不做拓扑校验。
-
-### 2.5 实际样例(`versions/redis-7.0.15/version.yaml`)
-
-```yaml
-version_id: redis-7.0.15
-description: Redis 7.0.15 patch overlay (BoostKit)
-owner: chaosv598@boostkit
-upstream_base:
-  repo: https://github.com/redis/redis
-  version: 7.0.15
-  commit: 8f9ea51a8cf42ac80c0e50141462ca2c03d8aa1d
-
-patches:
-  - name: 0001-hw-kunpeng-adapt-iouring
-    title: Adapt io_uring for Kunpeng ARM
-    owner: twwang@boostkit
-    type: ecological
-    status: submitted
-    pr: https://github.com/redis/redis/pull/TBD
-    note: Submitted upstream, awaiting review
-    dependence: []
-  - name: 0002-perf-kunpeng-adapt-dtoe
-    title: Enable dtoe (DMA-to-engine) network optimization on Kunpeng
-    owner: twwang@boostkit
-    type: project
-    status: accepted
-    note: Kunpeng-specific HW feature, will keep downstream-only
-    dependence: []
-  # ... 0003, 0004 同上
-```
+**为什么 sync-manifest.py 是核心**:它是**把 yaml 契约「翻译」成机器视图(WHITELIST.yaml)和人视图(PATCHES-STATUS.md)的唯一通道**。没有它,YAML 改了视图不会自动跟。
 
 ---
 
-## 3. `verify.sh` —— 唯一工具
+## 4. CI 工作流
 
-```bash
-bash tools/verify.sh
+### 4.1 `ci.yml`(6 阶段门禁)
+
+```
+PR opened / push master
+    ↓
+[1] sync-manifest --check (drift 检测)
+    ↓ drift? → 自动 [1.5] sync-manifest --write + commit + push [skip ci]
+    ↓
+[2] verify.sh (字段 + apply dry-run)
+[3] verify.sh (仓根禁放)
+[4] verify.sh (patches[] vs patches/ 一致)
+[5] upstream-lint (trailing-ws / CRLF)
+[6] whitelist-audit --strict
+    ↓ 全部绿
+允许 merge
 ```
 
-检查 3 件事:
+### 4.2 `build-perf.yml`(改 patch 自动触发)
 
-1. **仓根干净** — 无 `.patch` / `Dockerfile` / `build.sh` / `src/` / `storage/` 等
-2. **version.yaml 一致** — `patches[]` 数组声明的 `.patch` 文件与 `patches/` 目录实际文件一一对应(顺序由数组决定)
-3. **字段合法** — 顶层字段 + patches[] 元素字段、枚举(type/status)合法
-4. **干净 upstream apply** — 从 version.yaml 读 `upstream_base.repo + commit`,克隆后按数组顺序逐 patch apply
+由 `dorny/paths-filter` 检测 PR 是否改 `versions/<v>/**`;改了才触发,纯文档 PR 跳过。每个改动的 version 跑:clone upstream → apply patches → make → memtier_benchmark → 上传 artifact + Job Summary。
 
-**退出码**:
-- `0` = 全部通过
-- `1` = 有 hard error(仓根禁放、字段缺失、enum 非法、apply 元数据 vs 目录不一致)
+详见 `docs/build-perf.md` + `docs/ci-github-actions.md`。
 
-单 patch apply 失败**只警告不阻塞**(网络/版本漂移,owner 自己判断)。
+### 4.3 失败策略
+
+| 失败 | 行为 |
+|---|---|
+| ci.yml 任何阶段 fail | **block merge**(reject PR) |
+| build-perf:build fail | block merge(说明 patch 让 upstream 编不过) |
+| build-perf:bench fail | **warn 不 block**(性能波动,reviewer 决定) |
+| sync-manifest drift | **auto-fix**(自动 commit 修复并 push) |
 
 ---
 
-## 4. CI 流程
+## 5. 为什么是这套设计(取舍)
 
-### 4.1 1 个 job
+### 5.1 为什么一版本一 yaml 而不是一 patch 一 yaml
 
-```yaml
-verify:
-  runs-on: ubuntu-latest
-  steps:
-    - checkout
-    - pip install pyyaml
-    - bash tools/verify.sh
-```
+- 一 patch 一 yaml → N×版本数量 yaml 文件,每次 rebase 要同步 N 份
+- 一版本一 yaml → `cp -r versions/<v_old> versions/<v_new>` 一条命令搞定 rebase
+- 配合「数组顺序 = apply 顺序」,无需单独的 series/sequence 文件
 
-**总耗时 ~30 秒**(含 clone upstream)。
+### 5.2 为什么 5 状态而不是 3 状态
 
-### 4.2 PR 端到端流程
+- `rejected` 区分「上游拒绝」(有原因)和「pending 没发」(没原因),审计友好
+- `whitelisted` 是 BoostKit 真实业务需求——KRAIO / DTOE 等鲲鹏专属特性**不追求上游合入**,需要一个明确的永久携带状态
+- 3 状态强行把 rejected 折回 pending,丢失了审计信号
 
-```
-开发者本地
-   ↓
-git push origin feature/<branch>
-   ↓
-[CI] GitHub Actions verify job → bash tools/verify.sh
-   ↓ 绿
-开 PR 到 master
-   ↓
-人工 review + 合并
-   ↓
-[CI] master push → verify job 验证
-   ↓ 绿
-合并完成
-```
+### 5.3 为什么 sync-manifest 自动写 PATCHES.yaml 而不是让开发者手填
 
-> 简化点:不再有 pre-push 钩子(没有 .githooks/pre-push,也不再有 install-hooks.sh)。开发者 push 前自己跑 `bash tools/verify.sh`。
+- 「开发者手填派生视图」 = 双写 = 必然漂移 = 必然 CI 报错 = 必然吵
+- 「CI 自动派生 + drift 时 auto-commit」 = 开发者零额外负担 = 视图永远一致
+- 代价:CI 需要 `permissions: contents: write` 和一个 bot 身份(已配 `boostkit-bot`)
+
+### 5.4 为什么 build-perf 用 paths-filter 而不是全跑
+
+- 纯文档 PR 不应该浪费 2min 编译时间
+- paths-filter 检测 `versions/<v>/**` 改动 → 只跑改动的版本,其他跳过
+- 矩阵自动:改 2 个 version → 2 个并行 job;改 0 个 version → 0 个 job
 
 ---
 
-## 5. 4 步最常见操作
+## 6. 与历代版本的对比
 
-### A. 新增第 N 个 patch
+| 时间 | 工具数 | 状态机 | 元数据粒度 | CI job |
+|---|---|---|---|---|
+| 治理前 | 0 | 无 | 无 | 无 |
+| v5 MVP 初版 | 14 | 7 | 一 patch 一 yaml | 7 |
+| simplify-v1 | 6 | 5 | 一 patch 一 yaml | 1 |
+| simplify-v2 | 4 | 5 | 一 patch 一 yaml | 1 |
+| simplify-v3 | 1 | 3 | 一版本一 yaml | 1 |
+| **当前(v2 spec 落地版)** | **5** | **5** | **一版本一 yaml** | **ci.yml 6 阶段 + build-perf.yml** |
 
-```bash
-# 1. 创建 patch 文件
-vim versions/redis-7.0.15/patches/0005-xxx.patch
-
-# 2. 在 version.yaml 的 patches[] 数组末尾追加一项
-$EDITOR versions/redis-7.0.15/version.yaml
-
-# 3. 跑 verify
-bash tools/verify.sh
-
-# 4. 提交
-git add -A && git commit -m "feat(7.0.15): add xxx patch"
-git push
-```
-
-### B. 改 patch 状态(从 pending 到 submitted)
-
-```bash
-# 直接编辑 yaml,把 status 改成 submitted,加上 pr URL
-$EDITOR versions/redis-7.0.15/version.yaml
-# - status: pending
-# + status: submitted
-# + pr: https://github.com/redis/redis/pull/12345
-
-bash tools/verify.sh
-git add -A && git commit -m "feat(0001): submit upstream PR"
-git push
-```
-
-### C. 改完 push
-
-```bash
-bash tools/verify.sh   # 必跑,本地兜底
-git add -A && git commit -m "fix: ..."
-git push
-```
-
-### D. 上游发新版本(7.0.15 → 7.0.16)
-
-```bash
-# 手工复制目录结构(不再有 rebase.sh)
-mkdir -p versions/redis-7.0.16/patches
-cp versions/redis-7.0.15/version.yaml versions/redis-7.0.16/version.yaml
-cp versions/redis-7.0.15/patches/*.patch versions/redis-7.0.16/patches/
-
-# 更新 version.yaml:version_id / description / upstream_base.version / upstream_base.commit
-$EDITOR versions/redis-7.0.16/version.yaml
-
-# 更新所有 patch 的 upstream_base 字段(因为现在只有一个版本字段)
-# 实际上每个 patch 不再单独维护 upstream_base,只共用版本顶层字段
-
-# 跑 verify
-bash tools/verify.sh
-
-git add -A && git commit -m "chore(rebase): upgrade to 7.0.16"
-git push
-```
+> 简化过程快照(`1 工具 + 3 状态 + 1 CI job`)见 `docs/_archive/simplify-v3/`,仅作历史参考。
 
 ---
 
-## 6. 关键提示
+## 7. 相关文档
 
-- **首次参与**:`bash tools/verify.sh` 看仓健康度,然后 `cat versions/*/version.yaml` 看 metadata
-- **改完必跑**:`bash tools/verify.sh`
-- **改 patch metadata**:在 `version.yaml` 的 `patches[]` 数组里编辑对应项
-- **状态变更**:直接改 yaml 的 `status` 字段即可,git commit message 说明原因
-- **遇到不懂**:直接看 `versions/<v>/version.yaml` 的实际内容,无需先查文档
+| 文档 | 用途 |
+|---|---|
+| `docs/DEVELOPER-GUIDE.md` | **开发者上手手册**(流程、字段、PR 全流程) |
+| `docs/MANIFEST-PROCESS.md` | sync-manifest 详细协议 |
+| `docs/WHITELIST-PROCESS.md` | 白名单字段语义 + 季度评审 |
+| `docs/EXCEPTION-PROCESS.md` | `exception` 块机制 |
+| `docs/PATCHES-NAMING.md` | 文件名规范 |
+| `docs/build-perf.md` | build-perf 链路 |
+| `docs/_archive/simplify-v3/` | 历代简化版快照(历史参考,不维护) |
+| `CLAUDE.md` | 给 AI 助手的仓背景 |

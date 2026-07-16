@@ -1,180 +1,220 @@
-# CI —— GitHub Actions 版
+# CI —— GitHub Actions 配置
 
-> 最后更新 2026-07-14(simplify-v3 后 1 工具 + 1 job 落地版)
-> 对应工作流:`.github/workflows/ci.yml`
-> 配套工具:`bash tools/verify.sh`
+> **本文档**:`ci.yml` 6 阶段 + `build-perf.yml` 改 patch 自动触发。
+> **配套脚本**:`tools/verify.sh` / `tools/sync-manifest.py` / `tools/whitelist-audit.py` / `tools/upstream-lint.sh` / `tools/build-perf.sh`。
+> **设计原理**:`docs/GOVERNANCE.md §4`。
+> **历史版本**:`docs/_archive/simplify-v3/ci-github-actions.md`(1 job 时代,已弃用)。
 
 ---
 
 ## 0. 30 秒速读
 
-- **1 个 job**:`verify`(ubuntu-latest)
-- **4 步检查**:仓根禁放 → version.yaml 字段合法 → patches[] 与 patches/ 一致 → 干净 upstream apply
-- **3 个触发器**:push master / pull_request / workflow_dispatch
-- **典型时长**:本地 ~5s,CI ~30s
-- **完全免费**:Public 仓库无分钟限制
-
----
-
-## 1. 触发条件
-
-| 事件 | 行为 |
+| 维度 | 取值 |
 |---|---|
-| `push` to `master` | 跑 1 个 verify job |
-| `pull_request` to `master` | 同上 |
-| `workflow_dispatch` | 手动触发,菜单里 Run workflow |
-
-**并发控制**:`concurrency.cancel-in-progress = true`,**同 PR 后续 push 会取消旧 run**,节省 CI 分钟数。
-
----
-
-## 2. Job 矩阵
-
-| Job | 跑的命令 | blocking | 备注 |
-|---|---|---|---|
-| `verify` | `bash tools/verify.sh` | ✅ 必跑 | 1 步覆盖仓根禁放 + version.yaml 字段 + patches 一致 + upstream apply |
-
-> simplify-v3 之前是 1 个 job,simplify-v3 后依然是 1 个 job(只是 verify.sh 内部检查项从 3 项变为 4 项,加入了元数据 enum 校验)。
+| 工作流 | 2 个:`ci.yml`(必跑)+ `build-perf.yml`(改 patch 才跑) |
+| ci.yml 阶段 | **6**:`sync-check` / `auto-fix drift` / `verify` / `upstream-lint` / `whitelist-audit` |
+| build-perf 触发 | `dorny/paths-filter` 检测 `versions/<v>/**` 改动 |
+| 触发器 | `push master` / `pull_request` / `workflow_dispatch` |
+| 并发控制 | `cancel-in-progress: true`(同 PR 新 push 取消旧 run) |
+| 时长 | ci.yml ~30s(本地 ~5s);build-perf 首次 ~2.5min,带 cache ~1.8min |
 
 ---
 
-## 3. 工作流文件
+## 1. `ci.yml` —— 6 阶段门禁
+
+### 1.1 工作流文件
 
 ```yaml
-# .github/workflows/ci.yml(完整文件)
-name: verify
-
+name: ci
 on:
-  push:
-    branches: [master]
-  pull_request:
-    branches: [master]
+  pull_request: { branches: [master] }
+  push:         { branches: [master] }
   workflow_dispatch:
-
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
-
+permissions:
+  contents: write   # sync-manifest auto-fix 需要
 jobs:
   verify:
-    name: verify (patch overlay 一键校验)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Install pyyaml
-        run: pip install pyyaml --quiet
-      - name: Run verify
-        run: bash tools/verify.sh
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0, token: ${{ secrets.GITHUB_TOKEN }} }
+      - run: pip install pyyaml --quiet
+
+      # 1. sync-manifest drift 检测
+      - id: sync-check
+        run: |
+          set +e
+          python3 tools/sync-manifest.py --check; rc=$?
+          set -e
+          if [ "$rc" = "0" ]; then
+            echo "drift=false" >> "$GITHUB_OUTPUT"
+            echo "fix_needed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "drift=true" >> "$GITHUB_OUTPUT"
+            echo "fix_needed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # 1.5 drift 自动修复 + push
+      - if: steps.sync-check.outputs.fix_needed == 'true'
+        run: |
+          python3 tools/sync-manifest.py --write
+          git config user.name "boostkit-bot"
+          git config user.email "boostkit-bot@boostkit"
+          git add PATCHES.yaml WHITELIST.yaml docs/PATCHES-STATUS.md
+          git diff --cached --quiet || \
+            git commit -m "manifest: auto-sync from version.yaml [skip ci]" && git push
+
+      # 2-4. verify.sh 4 阶段(仓根禁放 + 字段 + 一致性 + apply dry-run)
+      - run: bash tools/verify.sh
+
+      # 5. upstream-lint
+      - run: bash tools/upstream-lint.sh versions/*/patches/*.patch
+
+      # 6. whitelist audit
+      - run: python3 tools/whitelist-audit.py --strict
 ```
 
----
+### 1.2 6 阶段流程图
 
-## 4. verify.sh 内部检查细节
-
-```text
-1. 仓根禁放检查:
-   - *.patch 不能在仓根(应移到 versions/<v>/patches/)
-   - Dockerfile / build.sh / Makefile 不能在仓根
-   - src/ storage/ sql/ vendor/ 等目录不能出现在仓根
-
-2. version.yaml 字段合法:
-   - 顶层:version_id / description / owner / upstream_base.repo+version+commit
-   - patches[] 每项:name / title / owner / type / status
-   - enum:type ∈ {ecological, project}
-   - enum:status ∈ {pending, submitted, accepted}
-
-3. patches[] vs patches/ 一致性:
-   - 遍历 versions/<v>/
-   - 比对 patches[] 数组声明的 .patch 文件名 vs patches/ 实际文件
-   - 不一致 → hard error(数组顺序就是 apply 顺序,漏声明/多文件都报错)
-
-4. 干净 upstream apply:
-   - 从 version.yaml 读 upstream_base.repo + commit
-   - git clone upstream(失败 → 回退到 tag checkout)
-   - 按 patches[] 数组顺序逐 patch git apply --check + git apply
-   - 单 patch apply 失败降级为 warning(不阻塞,owner 检查)
+```
+PR opened / push master
+    ↓
+[1] sync-manifest --check
+    ↓
+drift=true? ──── 是 ──▶ [1.5] --write + commit + push [skip ci]
+    │                          ↓
+    │                       自动回到 PR 流程
+    ↓ 否
+[2-4] verify.sh (仓根禁放 / yaml 字段 / patches[] 一致性 / upstream apply dry-run)
+    ↓
+[5] upstream-lint (trailing-ws / CRLF / tab-width / subject 长度)
+    ↓
+[6] whitelist-audit --strict (reason 字数 + 季度评审)
+    ↓ 全部绿
+✅ 允许 merge
 ```
 
-**退出码**:
-- `0`:全部通过(可能有 warning)
-- `1`:有 hard 错误(仓根污染 / version.yaml 字段缺失或 enum 非法 / patches[] 与 patches/ 不一致)
+### 1.3 失败策略
+
+| 阶段失败 | 行为 |
+|---|---|
+| [1] drift | 自动修复 + push,**不 block** |
+| [2-4] verify.sh 任一硬错 | **block merge** |
+| [5] upstream-lint | **block merge** |
+| [6] whitelist-audit | **block merge**(reason <30 字符) |
+| verify.sh 单 patch apply 失败 | **warn 不 block**(owner 检查 baseline) |
 
 ---
 
-## 5. 关键翻译点(对比 .gitee-ci.yml)
+## 2. `build-perf.yml` —— 改 patch 自动触发
 
-1. **image → runs-on**: GitHub Actions 不需要 `image:` 字段,用 `runs-on: ubuntu-latest` 即可
-2. **rules 条件**: `if: $CI_PIPELINE_SOURCE == 'merge_request_event'` → GitHub 的 `on: pull_request`
-3. **apk add bash git**: ubuntu-latest 自带 bash + git,无需装
-4. **6 个 job → 1 个 job**: 所有硬检查合并为 `bash tools/verify.sh`,保留硬性 fail,软警告降级为 stdout 输出
-5. **allow_failure: true → 不存在**: 当前设计下 verify job 任何 patch apply 失败只 warn 不 fail,所以无需 `continue-on-error`
+### 2.1 触发逻辑
+
+```
+PR opened
+    ↓
+[Job: changes] dorny/paths-filter 检测 PR diff
+    ↓
+命中 versions/<v>/**  →  启动 build-perf job (matrix: 每个改动 version 一个)
+未命中                 →  跳过(纯文档 PR 节省 ~2min CI)
+```
+
+### 2.2 matrix
+
+```yaml
+filters: |
+  redis_7_0_15:
+    - 'versions/redis-7.0.15/**'
+  redis_6_0_20:
+    - 'versions/redis-6.0.20/**'
+```
+
+> filter key 不能含点号(GHA 表达式把 `.` 当属性访问符),所以用下划线。
+
+### 2.3 build-perf job 步骤
+
+```
+1. 装依赖 build-essential + tcl-dev + libssl-dev + libevent-dev + liburing-dev + libconfig++-dev (~15s)
+2. 编 memtier_benchmark 2.1.0 从源码(~30s)
+3. cache key = upstream-<v>-<yaml-hash>,复用 clone
+4. tools/build-perf.sh build <v>
+   → clone upstream @ upstream_base.commit
+   → 按 patches[] 顺序 git apply
+   → make -j$(nproc) BUILD_TLS=no (~60s)
+5. tools/build-perf.sh bench <v>
+   → 启 redis-server :6399
+   → memtier_benchmark --threads=2 --clients=10 --test-time=30s
+   → shutdown + 解析输出 → artifacts/<v>/summary.md
+6. upload-artifact: memtier.log + summary.md (保留 30 天)
+7. 写 markdown → GitHub Job Summary
+```
+
+### 2.4 失败策略
+
+| 失败 | 行为 |
+|---|---|
+| `build` 阶段失败 | **block merge**(patch 让 upstream 编不过) |
+| `bench` 数据异常 | **warn 不 block**(性能波动,reviewer 决定) |
+| paths-filter 跳过 | 不跑(节省 CI) |
+
+详见 `docs/build-perf.md`。
 
 ---
 
-## 6. 预计运行时间
+## 3. 与 verify workflow 的关系
 
-| 阶段 | 时间 | 备注 |
+| 维度 | ci.yml (verify) | build-perf.yml |
 |---|---|---|
-| Checkout + pip install pyyaml | ~5s | actions/checkout@v4 已缓存 |
-| verify 仓根禁放 + 字段校验 + patches 一致 | <1s | 纯本地检查 |
-| verify upstream clone + apply | ~25s | 主要花在 `git clone https://github.com/redis/redis --depth 1` |
+| 跑的内容 | dry-run `git apply --check` | 真的 `make` + 启 redis + 跑 memtier |
+| 时长 | ~30s(CI) | ~2-3min |
+| 触发 | 所有 PR + push master | 仅改 patch 的 PR |
+| 失败 | 6 阶段任一 fail 即 block | build fail block;bench warn 不 block |
+| 报告 | pass/fail | markdown + memtier log artifact |
 
-**总时长 ~30s**(对比 .gitee-ci.yml 的 1-3 分钟,GitHub runner 普遍更快)。
-
----
-
-## 7. 必要权限 / 限制
-
-- **Public 仓库**: 完全免费,无分钟数限制
-- **Private 仓库**: GitHub Free tier 给 2000 分钟/月
-- 不需要任何 GitHub Secrets(verify.sh 走匿名 clone)
-- 如未来要加私有 upstream,需 `GH_TOKEN` + `actions/checkout` 用 token
+**判断标准**:
+- 普通 patch 改动 → verify 够用(默认 PR 触发)
+- 性能敏感改动 / patch 兼容性验证 → build-perf 必跑(改动 patch 自动触发)
+- 想跑 baseline 对比 → workflow_dispatch 手动触发任意 version
 
 ---
 
-## 8. 失败处理
+## 4. 权限 / 限制
 
-| 失败类型 | 修复路径 |
+- **Public 仓库**:完全免费,无分钟数限制
+- **Private 仓库**:GitHub Free tier 2000 分钟/月
+- 不需要任何 GitHub Secrets 即可跑通(verify.sh 走匿名 clone upstream)
+- `ci.yml` 用了 `secrets.GITHUB_TOKEN` 是为了让 auto-fix drift 时能 push;**不开 contents: write 就跑不了 auto-fix**
+- 如未来要加私有 upstream,需额外 `GH_TOKEN` + 私有 actions/checkout token
+
+---
+
+## 5. 失败排查
+
+| 报错 | 修复 |
 |---|---|
-| `仓根发现 .patch 文件` | 移到 `versions/<v>/patches/` |
-| `version.yaml 缺 upstream_base.repo 或 commit` | 补 yaml 字段 |
-| `patches[] 与 patches/ 不一致` | 把 `patches/*.patch` 文件名同步到 `patches[]`(数组顺序即 apply 顺序) |
-| `patches[] 有 enum 非法` | type 仅 `ecological`/`project`;status 仅 `pending`/`submitted`/`accepted` |
-| `SHA 无效,改用 tag` | upstream commit SHA 写错了,查 git log 拿真实 SHA |
+| `drift: WHITELIST.yaml` | 跑 `sync-manifest.py --write` 或等 CI auto-fix |
+| `missing: docs/PATCHES-STATUS.md` | 同上 |
+| `patches[<i>].type='foo' not in ...` | enum 填错 |
+| `patches[<i>].status='xxx' not in ...` | enum 填错 |
+| `status=submitted but upstream_pr[] empty` | 补 PR URL 列表 |
+| `status=whitelisted but whitelist_reason <30 chars` | 写够 30 字符 |
 | `apply 失败(单 patch)` | warning 不阻塞;owner 检查 baseline 漂移 |
-| `clone <repo> 失败` | 几乎都是网络抖动,重跑即可 |
+| `trailing whitespace` | `sed -i 's/[[:space:]]*$//' <patch>` |
+| `unexpected symbol: 0.15` (paths-filter) | filter key 不要含 `.` |
+| memtier 慢 / 0 ops | 看 `artifacts/<v>/redis.log`,端口 :6399 可能被占 |
 
 ---
 
-## 9. 与 v5 规范的对应
+## 6. 历史
 
-- v5 §1 第 7 条铁律: "所有 CI 必跑 4 步:yaml-lint → apply → build → owners,绿才允许 merge"
-- 本仓 1 步 = `verify.sh` 覆盖 yaml 字段校验 + apply;**build 留给消费方**(下游用户在本地跑);**owners 留给 GitHub PR review**(无强制 ≥ 2 签)
-- v5 §3.7 `.gitee-ci.yml` 4 步模板 → 本文件做 GitHub Actions 适配
-- v5 §13 验收指标 3 "CI 4 步接入: 100%(可豁免未启用)":**本仓已在 GitHub 启用,可作为 W2 验收示范**
+| 阶段 | 工作流 | 阶段数 | 触发 |
+|---|---|---|---|
+| 治理前 | 无 | 0 | — |
+| simplify-v3(已弃用) | ci.yml | 1 个 job:`verify` | push/PR |
+| **当前** | ci.yml + build-perf.yml | **ci 6 阶段** + build-perf 2 job | push/PR + paths-filter |
 
----
-
-## 10. 进一步优化方向(超出 MVP 4 周范围)
-
-- 加 `actions/cache` 缓存 pip(影响小,跳过)
-- upstream clone 改 sparse + shallow + cache,可能再省 10s(影响小,跳过)
-- verify 改 matrix(每个 upstream version 一个 job,失败定位更准)— 当前 1 job 30s 已够用
-- 加 `policy-bot` / `dangerjs` 强约束 PR 模板(本仓 PR 模板已是规范版本)
-
----
-
-## 11. 端到端 PR 验证记录
-
-| 字段 | 值 |
-|---|---|
-| 验证日期 | 2026-07-13 / 2026-07-14 |
-| 验证人 | chaosv598 |
-| 分支 | `feature/test-ci-pr-demo` / `feature/add-0004-rdb-aof-fallback` / `feature/retire-archive` / `feature/simplify-v3-one-version-one-yaml` |
-| 验证目的 | 确认 1 个 verify job 在 PR + post-merge 触发器下全部跑通 |
-| 验证方法 | 提交一个新增 patch 或文档改动,开 PR 到 master,等 CI 绿后 squash merge |
-| 预期 | verify job `queued` → `in_progress` → `success`,post-merge 再跑一次 `success` |
-| 状态 | ✅ 已通过(累计多次,simplify-v3 重新跑通,见 git log) |
-
-> 历史 6 job 矩阵时代(`.gitee-ci.yml` 翻译版)的所有 PR 验证 run ID 已废弃,见 `git log` archive。
+> simplify-v3 的 `ci-github-actions.md` 见 `docs/_archive/simplify-v3/`,仅作历史参考。

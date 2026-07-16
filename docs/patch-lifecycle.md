@@ -1,218 +1,187 @@
 # Patch 生命周期 & 元数据格式
 
-> 配套工具:`bash tools/verify.sh`(全仓唯一工具)
-> 上游:`chaosv598/Redis-mvp-demo` · 最后更新 2026-07-14
-> 本文档版本 = v5 MVP **simplify-v3 落地版**(1 工具 + 3 状态 + 一版本一 yaml)
+> **本文档**:字段表 + 5 状态机 + 4 个常见操作。
+> **速查手册**:`docs/DEVELOPER-GUIDE.md`(PR 全流程 / 工具调用 / 不要做的事)。
+> **设计原理**:`docs/GOVERNANCE.md`。
+> **历史版本**:`docs/_archive/simplify-v3/patch-lifecycle.md`(3 状态叙事,已弃用)。
 
 ---
 
 ## 0. 30 秒速读
 
-| 维度 | 数值 |
+| 维度 | 取值 |
 |---|---|
-| 工具数 | **1** 个(`verify.sh`) |
-| 状态数 | **3** 个(pending / submitted / accepted) |
-| 元数据 | **一版本一 yaml**(`version.yaml`),patches 用数组 |
-| patch 字段 | **8** 个(name / title / owner / type / status / pr / note / dependence) |
-| CI job | **1** 个(verify) |
-| 退役机制 | **无** |
-| rebase 工具 | **无**(人工 cp 目录) |
-| lifecycle 工具 | **无**(状态直接改 yaml 字段,git history 即时间线) |
+| 元数据 | **一版本一 yaml**(`versions/<v>/version.yaml`),patches 用数组 |
+| 状态 | **5**:`pending` / `submitted` / `accepted` / `rejected` / `whitelisted` |
+| 分类 | `type=ecological` / `type=project` |
+| 数组顺序 | = apply 顺序(verify.sh 严格按数组顺序 git apply) |
+| `dependence` | 仅作文档提示,不做拓扑校验 |
 
 ---
 
-## 1. 3 状态机
+## 1. 元数据格式
 
-每个 patch 在 `version.yaml` 的 `patches[i].status` 字段标识当前状态。
+### 1.1 版本字段(version.yaml 顶层)
 
-```
-                 ┌─────────┐
-                 │ pending │ patch 文件已加入
-                 └────┬────┘
-            发上游 PR │
-                      ▼
-                 ┌──────────┐
-                 │submitted │(type=project 时直接跳到 accepted)
-                 └────┬─────┘
-              上游 merge │
-                      ▼
-                 ┌──────────┐
-                 │ accepted │ 终态(本仓永久保留)
-                 └──────────┘
+```yaml
+version_id: redis-7.0.15                       # 必须与目录名一致
+description: Redis 7.0.15 patch overlay (BoostKit)
+owner: chaosv598@boostkit
+upstream_base:
+  repo: https://github.com/redis/redis         # verify.sh 拉这个仓
+  version: 7.0.15
+  commit: f35f36a265403c07b119830aa4bb3b71653ec9   # 40 位 SHA
 ```
 
-### 1.1 状态机合法转换
+### 1.2 patches[] 元素
+
+```yaml
+patches:
+  - name: 0001-hw-kunpeng-adapt-iouring        # 必须与 patches/<name>.patch 对应
+    title: Adapt io_uring for Kunpeng ARM
+    owner: twwang@boostkit
+    type: ecological                           # ecological(推上游) / project(本仓独享)
+    status: submitted                          # 5 选 1,见 §2
+    upstream_pr:                               # status∈{submitted, accepted} 时必填
+      - https://github.com/redis/redis/pull/12345
+    whitelist_reason: ""                       # status∈{whitelisted, rejected} 时必填
+    dependence: []
+```
+
+### 1.3 字段约束
+
+| 字段 | 必填 | 枚举/格式 | 校验时机 |
+|---|---|---|---|
+| `version_id` | ✅ | 字符串,与目录名一致 | sync-manifest |
+| `upstream_base.repo` | ✅ | URL | verify.sh + sync-manifest |
+| `upstream_base.commit` | ✅ | 40 位 SHA | verify.sh |
+| `patches[].name` | ✅ | 字符串,必须去掉 `.patch` 后缀与文件匹配 | verify.sh |
+| `patches[].type` | ✅ | `ecological` / `project` | sync-manifest |
+| `patches[].status` | ✅ | 5 选 1 | sync-manifest |
+| `patches[].upstream_pr` | status∈{submitted, accepted} 时必填 | URL 数组 ≥1 | sync-manifest |
+| `patches[].whitelist_reason` | status∈{whitelisted, rejected} 时必填 | whitelisted ≥30 字符 | sync-manifest + whitelist-audit |
+| `patches[].dependence` | ⬜ | 字符串数组 | 仅文档提示 |
+
+---
+
+## 2. 5 状态机
+
+```
+pending ──发上游PR──▶ submitted ──上游merge──▶ accepted
+   │                     │
+   │ type=project         │ 上游reject
+   ▼                     ▼
+accepted            rejected ◀── 也可改回 pending 重发
+   │
+   │ 永久携带(项目型 / 强硬件绑定)
+   ▼
+whitelisted(走 whitelist_reason ≥30 字符)
+```
+
+### 2.1 合法转换表
 
 | 当前状态 | 合法下一状态 | 触发动作 |
 |---|---|---|
-| `pending` | `submitted` | 发上游 PR,把 `pr` URL 写到 yaml |
+| `pending` | `submitted` | 发上游 PR,把 `upstream_pr[]` 填上 |
 | `pending` | `accepted` | type=project 直接在本仓落地 |
-| `submitted` | `accepted` | 上游 merge |
-| `submitted` | `pending` | PR 被拒/长期不响应,撤回 |
-| `accepted` | (终态) | 不再变;patch 永久保留 |
+| `submitted` | `accepted` | 上游 merge,补 merged commit 备注 |
+| `submitted` | `pending` | PR 被拒/长期不响应,撤回重发 |
+| `submitted` | `rejected` | 上游明确 reject,`whitelist_reason` 填拒绝原因 |
+| `accepted` | (终态) | 永久保留;不再变 |
+| `rejected` | `pending` | 改 patch 内容后重新提交 |
+| `rejected` | `whitelisted` | 决定永久携带,补 ≥30 字符 whitelist_reason |
+| `whitelisted` | `pending` | 决定重新尝试上游合入(罕见) |
 
-> **没有 retired 状态**。所有 patch 永久保留在仓里,不存在日落/sunset 工作流。
-
-### 1.2 type 字段的作用
-
-`type` 区分 patch 性质,跟 `status` 配合使用:
+### 2.2 type 字段的作用
 
 | type | 含义 | 典型 status 路径 |
 |---|---|---|
 | `ecological` | 修复/特性会上游合入 | pending → submitted → accepted |
 | `project` | 本仓独享(平台特性、业务定制) | pending → accepted(无需 submitted) |
 
-**hard rule**:`type=project` 时**不允许** `status=rejected`(本仓 reject 项目型 patch 没语义)。本设计下没有 rejected 状态;若上游拒绝 ecological patch,把 status 改回 `pending` 即可。
+`type=project` 不允许 `status=rejected`(本仓 reject 项目型 patch 没语义)。
 
 ---
 
-## 2. 一版本一 yaml 元数据格式
-
-`versions/<v>/version.yaml` 含 2 块:**版本字段(顶层)** + **patches 数组**。
-
-### 2.1 版本字段(顶层)
-
-| 字段 | 必填 | 说明 |
-|---|---|---|
-| `version_id` | ✅ | 唯一标识,跟目录名一致 |
-| `description` | ✅ | 版本作用简介 |
-| `owner` | ✅ | 版本维护人 |
-| `upstream_base.repo` | ✅ | 上游仓库(verify.sh 拉此仓库) |
-| `upstream_base.version` | ✅ | 上游版本 tag |
-| `upstream_base.commit` | ✅ | 上游 commit SHA(verify.sh checkout 这个) |
-
-### 2.2 patches 数组
-
-`patches[]` 每个元素:
-
-| 字段 | 必填 | 枚举 | 说明 |
-|---|---|---|---|
-| `name` | ✅ | 字符串 | 文件名前缀(如 `0001-hw-kunpeng-adapt-iouring`) |
-| `title` | ✅ | 字符串 | patch 一句话作用 |
-| `owner` | ✅ | 邮箱 | 该 patch 负责人 |
-| `type` | ✅ | `ecological` / `project` | 生态型(需合入上游)/项目型(本仓独享) |
-| `status` | ✅ | `pending` / `submitted` / `accepted` | 待合入 / 已发 PR / 已合入 |
-| `pr` | ⬜ | URL | type=ecological 且 status=submitted 时填 |
-| `note` | ⬜ | 文本 | 自由说明 |
-| `dependence` | ⬜ | 数组 | 依赖的 patch name(verify.sh 按数组顺序 apply,dependence 仅作文档提示) |
-
-### 2.3 完整样例
-
-```yaml
-version_id: redis-7.0.15
-description: Redis 7.0.15 patch overlay (BoostKit)
-owner: chaosv598@boostkit
-upstream_base:
-  repo: https://github.com/redis/redis
-  version: 7.0.15
-  commit: 8f9ea51a8cf42ac80c0e50141462ca2c03d8aa1d
-
-patches:
-  - name: 0001-hw-kunpeng-adapt-iouring
-    title: Adapt io_uring for Kunpeng ARM
-    owner: twwang@boostkit
-    type: ecological
-    status: submitted
-    pr: https://github.com/redis/redis/pull/TBD
-    note: Submitted upstream, awaiting review
-    dependence: []
-  - name: 0002-perf-kunpeng-adapt-dtoe
-    title: Enable dtoe network optimization on Kunpeng
-    owner: twwang@boostkit
-    type: project
-    status: accepted
-    note: Kunpeng-specific HW feature, will keep downstream-only
-    dependence: []
-```
-
----
-
-## 3. `verify.sh` 用法
-
-### 3.1 命令
-
-```bash
-bash tools/verify.sh
-```
-
-### 3.2 检查 4 件事
-
-1. **仓根干净**:无 `.patch` / `Dockerfile` / `build.sh` / `src/` / `storage/` 等
-2. **version.yaml 字段合法**:顶层字段、enum 校验
-3. **patches[] 与 patches/ 一致**:数组声明的文件名 = 目录实际文件
-4. **干净 upstream apply**:从 `upstream_base.repo+commit` 拉代码,按数组顺序逐 patch apply
-
-### 3.3 退出码
-
-- `0`:全部通过(可能有 warning,如某 patch apply 失败因为 baseline 不匹配)
-- `1`:有 hard error(仓根污染、字段缺失、enum 非法、apply 元数据 vs 目录不一致)
-
-### 3.4 使用时机
-
-- 改完 version.yaml / patches/ 后必跑
-- PR 提交前
-- CI 中(`.github/workflows/ci.yml` 唯一 job)
-
----
-
-## 4. 4 个常见场景
+## 3. 4 个常见场景
 
 ### 场景 A:新增第 N 个 patch
 
 ```bash
-# 1. 创建 patch 文件
-$EDITOR versions/redis-7.0.15/patches/0005-my-fix.patch
+# 1. 创建 patch 文件(命名规范见 docs/PATCHES-NAMING.md)
+$EDITOR versions/redis-7.0.15/patches/0005-fix-memory-leak.patch
 
 # 2. 在 version.yaml 的 patches[] 末尾追加一项
 $EDITOR versions/redis-7.0.15/version.yaml
 
-# 3. 验证
+# 3. 本地校验
 bash tools/verify.sh
+python3 tools/sync-manifest.py --check
+python3 tools/whitelist-audit.py --strict
 
-# 4. 提交
-git add -A && git commit -m "feat(7.0.15): add my-fix patch"
-git push
+# 4. commit
+git add versions/redis-7.0.15/patches/0005-fix-memory-leak.patch
+git add versions/redis-7.0.15/version.yaml
+git commit -m "feat(7.0.15): add 0005-fix-memory-leak patch"
+git push -u origin feat/add-0005-memory-leak-fix
+gh pr create
 ```
 
-### 场景 B:patch 状态从 pending → submitted
+### 场景 B:patch 状态变更(pending → submitted)
 
-```bash
-# 1. 改 yaml:status=submitted,加 pr URL
-$EDITOR versions/redis-7.0.15/version.yaml
-# - status: pending
-# + status: submitted
-# + pr: https://github.com/redis/redis/pull/12345
-
-# 2. 验证 + 提交
-bash tools/verify.sh
-git add -A && git commit -m "feat(0001): submit upstream PR"
-git push
+```yaml
+- status: pending
++ status: submitted
++ upstream_pr:
++   - https://github.com/redis/redis/pull/12345
 ```
 
-### 场景 C:改完 push(常规 fix)
+`bash tools/verify.sh && python3 tools/sync-manifest.py --check` → commit → push。
+
+### 场景 C:加白名单 / 续白名单
+
+```yaml
+- status: accepted
++ status: whitelisted
++ whitelist_reason: |
++   Kunpeng-specific DMA-to-engine HW feature; no upstream equivalent
++   interface; reviewed by twwang@boostkit on 2026-06.
+```
+
+CI 自动派生到 `WHITELIST.yaml`。`whitelist-audit --strict` 校 reason 字数。
+
+### 场景 D:上游发新版本(rebase)
+
+**当前没有自动化 rebase 工具**——人工复制目录:
 
 ```bash
-bash tools/verify.sh    # 本地必跑
-git add -A && git commit -m "fix: ..."
-git push
+mkdir -p versions/redis-7.0.16/patches
+cp versions/redis-7.0.15/version.yaml versions/redis-7.0.16/
+cp versions/redis-7.0.15/patches/*.patch versions/redis-7.0.16/patches/
+$EDITOR versions/redis-7.0.16/version.yaml
+# 改:version_id / description / upstream_base.version / upstream_base.commit
 ```
 
 ---
 
-## 5. 历次治理精简记录
+## 4. 数组顺序即 apply 顺序
 
-| 时间 | 变更 | 工具数 | 状态机 | 元数据粒度 | CI job |
-|---|---|---|---|---|---|
-| 2026-06-XX | 治理前 | 0 | 无 | 无 | 无 |
-| 2026-07-08 | v5 MVP 初版 | 14 | 7 | 一 patch 一 yaml | 7 |
-| 2026-07-10 | simplify-v1 | 6 | 5 | 一 patch 一 yaml | 1 |
-| 2026-07-13 | simplify-v2 | 4 | 5 | 一 patch 一 yaml | 1 |
-| 2026-07-14 | simplify-v3 | **1** | **3** | **一版本一 yaml** | 1 |
+`patches[]` 的**顺序就是 `git apply` 的顺序**。`dependence` 字段只作文档提示,verify.sh 不做拓扑校验:
 
-simplify-v3 关键变化:
-- 一版本一 yaml(取代一 patch 一 yaml + series 文件)
-- 状态机从 5 状态(pending/validated/submitted/accepted/retired)简化为 3 状态(pending/submitted/accepted)
-- 工具从 4 个简化为 1 个,只保留 verify.sh
-- 删除 lifecycle.sh、rebase.sh、apply-and-build.sh、install-hooks.sh
-- 删除 retired/ 归档机制,patch 永久保留
-- 删除 pre-push 钩子(.githooks/pre-push)
+- 想让 B 依赖 A,把 B 放在 A 后面
+- 永远**在末尾追加**新 patch;不要在中间插入(会改 apply 顺序 = 改实际行为)
+- 如果必须调整顺序 = 等同于新增 patch,正常 PR 即可
+
+---
+
+## 5. 与自动派生物的关系
+
+```
+versions/<v>/version.yaml     ← 开发者手写(唯一入口)
+    ↓ sync-manifest.py 派生
+├── PATCHES.yaml              ← 仓根,机器读,跨版本聚合
+├── WHITELIST.yaml            ← 仓根,白名单视图
+└── docs/PATCHES-STATUS.md    ← 人读状态仪表盘
+```
+
+**开发者不动手改派生物**——改了也会被 CI 覆盖;sync-manifest drift 时 CI 自动 commit 修复(带 `[skip ci]`)。

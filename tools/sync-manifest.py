@@ -15,6 +15,8 @@ sync-manifest —— version.yaml → PATCHES.yaml / WHITELIST.yaml / docs/PATCH
 """
 import argparse
 import datetime
+import re
+import subprocess
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -25,6 +27,74 @@ ROOT = Path(__file__).resolve().parent.parent
 
 STATUS_ENUM = {"pending", "submitted", "accepted", "rejected", "whitelisted"}
 TYPE_ENUM = {"ecological", "project"}
+
+
+def _run_git(*args: str) -> str | None:
+    """在仓根跑 git,失败/无 git 时返回 None。"""
+    try:
+        r = subprocess.run(
+            ["git", *args],
+            capture_output=True, text=True, cwd=ROOT, timeout=5,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    if r.returncode != 0:
+        return None
+    return r.stdout
+
+
+def find_first_whitelisted_date(patch_name: str, version_id: str) -> str:
+    """从 git 历史推断 patch 第一次被标 whitelisted 的日期。
+
+    算法:在 versions/<v>/version.yaml 里找到该 patch 当前 status: whitelisted 所在行,
+    然后 `git blame` 拿到首个 commit SHA,再 `git show -s --format=%as` 拿日期。
+
+    边界:
+      - 无 git / 非 git 仓        → 今天(回退)
+      - 当前 status 不是 whitelisted(理论上不应被调用,因外层已过滤) → 今天
+      - 该行未提交或 working tree 修改 → 今天
+      - patch 多次被 whitelisted/取消/blame 锚定的是「最近一次置为 whitelisted」而非「首次」
+        (对 MVP 可接受;若需要严格「首次」,改用 `git log -L` 全量遍历)
+    """
+    fallback = datetime.date.today().isoformat()
+    version_yaml = ROOT / "versions" / version_id / "version.yaml"
+    if not version_yaml.exists():
+        return fallback
+
+    # 在 version.yaml 里找 patch 的 name 行 + 后续 20 行内找 status: whitelisted 行号
+    lines = version_yaml.read_text(encoding="utf-8").splitlines()
+    name_line = None
+    for i, line in enumerate(lines):
+        if re.search(rf"^\s*-?\s*name:\s*{re.escape(patch_name)}\s*$", line):
+            name_line = i + 1  # 1-indexed
+            break
+    if name_line is None:
+        return fallback
+    status_line = None
+    for i in range(name_line, min(name_line + 20, len(lines))):
+        if re.search(r"^\s*status:\s*whitelisted\s*$", lines[i]):
+            status_line = i + 1
+            break
+    if status_line is None:
+        return fallback
+
+    rel_path = str(version_yaml.relative_to(ROOT))
+    blame = _run_git("blame", "-L", f"{status_line},{status_line}", "--porcelain", "--", rel_path)
+    if not blame:
+        return fallback
+    # porcelain 首行: "<sha> <orig> <final> ..."
+    first_line = blame.split("\n", 1)[0]
+    parts = first_line.split()
+    if not parts:
+        return fallback
+    sha = parts[0]
+    if not sha or set(sha) == {"0"}:  # 全 0 表示未跟踪 / 行被替换
+        return fallback
+
+    date = _run_git("show", "-s", "--format=%as", sha)
+    if not date:
+        return fallback
+    return date.strip() or fallback
 
 
 def load_yaml(path: Path) -> dict:
@@ -105,12 +175,19 @@ def build_whitelist_manifest(patches_manifest: dict) -> dict:
         if len(reason.strip()) < 30:
             # 跳过 reason 不合格的,whitelist-audit 会标出
             continue
+        # 从 git 历史推断每个 version 里这个 patch 第一次被标 whitelisted 的日期
+        # 跨多 version 时取最早(理论上不同 version 同步升级,差异不应大)
+        dates = []
+        for a in p["applies_to"]:
+            d = find_first_whitelisted_date(p["name"], a["version"])
+            dates.append(d)
+        first_date = min(dates) if dates else datetime.date.today().isoformat()
         items.append({
             "id": p["id"],
             "name": p["name"],
             "reason": reason.strip(),
             "applies_to": [a["version"] for a in p["applies_to"]],
-            "first_whitelisted": now[:10],  # 占位
+            "first_whitelisted": first_date,
             "next_review": "2026-09-15",  # 季度评审 (规范 §4.4)
         })
     return {
