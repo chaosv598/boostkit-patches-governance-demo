@@ -122,13 +122,20 @@ do_build() {
     log "make distclean ..."
     (cd "$src_dir" && make distclean 2>&1 | tail -3 >&2) || true
     log "make build (-j$(nproc), ~60s) ..."
-    (cd "$src_dir" && set -o pipefail; make -j"$(nproc)" 2>&1 | tail -30 >&2)
-    local make_rc=${PIPESTATUS[0]}
-    if [ "$make_rc" -ne 0 ]; then
+    # 把 make 输出落到日志文件,避免 pipe (tail) 掩盖 make 失败退出码
+    # 旧代码用 `( ... )` subshell 后再取 $PIPESTATUS,subshell 结束后 PIPESTATUS 已被
+    # 调用前的命令覆盖,导致 make 失败被吞、step 假 success。修:不用 pipe,直接 if !。
+    local make_log="$WORK/$ver/make.log"
+    if ! (cd "$src_dir" && make -j"$(nproc)" >"$make_log" 2>&1); then
+        local make_rc=$?
         err "make 失败 (rc=$make_rc),upstream apply 后无法编译"
         err "可能原因:patch 与 upstream SHA 不匹配 / patch 引入语法错 / 缺依赖"
+        err "完整日志: $make_log"
+        tail -30 "$make_log" >&2 || true
         exit 1
     fi
+    # 成功后也把尾巴给用户看
+    tail -10 "$make_log" >&2 || true
 
     # 打包 binary 供 bench 复用
     log "collect binaries → $bin_dir"
