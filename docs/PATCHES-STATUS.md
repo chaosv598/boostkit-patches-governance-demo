@@ -1,8 +1,8 @@
 # Patch 状态仪表盘
 
 > 自动生成,源:`tools/sync-manifest.py`
-> 最近同步:`2026-07-16T19:10:24+08:00`
-> 总计:**5 个 patch**
+> 最近同步:`2026-07-17T02:52:24+00:00`
+> 总计:**7 个 patch**
 
 ## 状态码说明
 
@@ -16,7 +16,7 @@
 
 ## 状态分布
 
-- **pending**: 1
+- **pending**: 3
 - **submitted**: 3
 - **whitelisted**: 1
 
@@ -29,6 +29,8 @@
 | `0002-perf-kunpeng-adapt-dtoe` | whitelisted | redis-7.0.15 | Kunpeng-specific DMA-to-engine HW feature; no u... |
 | `0003-perf-jemalloc-arm64-pointer-tag-and-gc` | submitted | redis-7.0.15 | - |
 | `0004-perf-rdb-fallback-aof` | submitted | redis-7.0.15 | - |
+| `0005-test-fake-noop` | pending | redis-7.0.15 | - |
+| `0006-test-fake-noop2` | pending | redis-7.0.15 | - |
 
 ## 季度评审
 
