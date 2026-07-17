@@ -65,6 +65,10 @@ jobs:
           fi
 
       # 1.5 drift 自动修复 + push (规范 §8.3) — 只在确实 drift 时跑
+      # push 目标:PR 触发时推到 PR head ref,push master / workflow_dispatch 时推到当前 ref
+      #   - github.head_ref: PR 触发时 = PR 源分支(如 test/fix-foo);其他触发时为空
+      #   - github.ref_name: push/workflow_dispatch 时 = 分支名(如 master)
+      #   - 默认空字符串 fallback 到 master,避免 detached HEAD 下 `git push` 失败
       - name: Auto-fix manifest drift
         if: steps.sync-check.outputs.fix_needed == 'true'
         run: |
@@ -76,7 +80,10 @@ jobs:
             echo "nothing to commit"
           else
             git commit -m "manifest: auto-sync from version.yaml [skip ci]"
-            git push
+            target_ref="${{ github.head_ref || github.ref_name }}"
+            target_ref="${target_ref:-master}"
+            echo "push target: origin HEAD:$target_ref"
+            git push "origin" "HEAD:$target_ref"
           fi
 
       # 2-4. yaml schema + 文件名 + apply dry-run (verify.sh)
