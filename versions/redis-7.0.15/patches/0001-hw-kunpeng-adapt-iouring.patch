@@ -1,5 +1,20 @@
+From d3f25dabe68a85e6aa7cfe7354bb5f380b57ee67 Mon Sep 17 00:00:00 2001
+From: twwang <920347125@qq.com>
+Date: Thu, 20 Nov 2025 21:30:33 +0800
+Subject: [PATCH] redis-7.0.15-adapt-iouring
+
+---
+ redis.conf       |   2 +-
+ src/Makefile     |   2 +-
+ src/config.c     |   1 +
+ src/evict.c      |   2 +-
+ src/networking.c | 313 +++++++++++++++++++++++++++++++++++++++++++++++
+ src/server.c     |   5 +-
+ src/server.h     |   4 +
+ 7 files changed, 324 insertions(+), 5 deletions(-)
+
 diff --git a/redis.conf b/redis.conf
-index 0431c374..cdf2ef49 100644
+index 0431c3742..cdf2ef491 100644
 --- a/redis.conf
 +++ b/redis.conf
 @@ -144,7 +144,7 @@ port 6379
@@ -12,25 +27,20 @@ index 0431c374..cdf2ef49 100644
  # Unix socket.
  #
 diff --git a/src/Makefile b/src/Makefile
-index e4f7d906..673c3490 100644
+index e4f7d9068..23981fb61 100644
 --- a/src/Makefile
 +++ b/src/Makefile
-@@ -370,8 +370,13 @@ ifneq ($(strip $(PREV_FINAL_LDFLAGS)), $(strip $(FINAL_LDFLAGS)))
- endif
+@@ -371,7 +371,7 @@ endif
  
  # redis-server
-+ifeq ($(HAVE_KRAIO),1)
-+$(REDIS_SERVER_NAME): $(REDIS_SERVER_OBJ)
-+	$(REDIS_LD) -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/lua/src/liblua.a ../deps/hdr_histogram/libhdrhistogram.a -lkraio $(FINAL_LIBS)
-+else
  $(REDIS_SERVER_NAME): $(REDIS_SERVER_OBJ)
- 	$(REDIS_LD) -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/lua/src/liblua.a ../deps/hdr_histogram/libhdrhistogram.a $(FINAL_LIBS)
-+endif
+-	$(REDIS_LD) -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/lua/src/liblua.a ../deps/hdr_histogram/libhdrhistogram.a $(FINAL_LIBS)
++	$(REDIS_LD) -o $@ $^ ../deps/hiredis/libhiredis.a ../deps/lua/src/liblua.a ../deps/hdr_histogram/libhdrhistogram.a -lkraio $(FINAL_LIBS)
  
  # redis-sentinel
  $(REDIS_SENTINEL_NAME): $(REDIS_SERVER_NAME)
 diff --git a/src/config.c b/src/config.c
-index bfb49ef9..ecfd44bd 100644
+index bfb49ef9c..ecfd44bde 100644
 --- a/src/config.c
 +++ b/src/config.c
 @@ -2965,6 +2965,7 @@ static int applyClientMaxMemoryUsage(const char **err) {
@@ -42,7 +52,7 @@ index bfb49ef9..ecfd44bd 100644
      createBoolConfig("daemonize", NULL, IMMUTABLE_CONFIG, server.daemonize, 0, NULL, NULL),
      createBoolConfig("io-threads-do-reads", NULL, DEBUG_CONFIG | IMMUTABLE_CONFIG, server.io_threads_do_reads, 0,NULL, NULL), /* Read + parse from threads? */
 diff --git a/src/evict.c b/src/evict.c
-index a9e24a76..c806dd96 100644
+index a9e24a762..c806dd963 100644
 --- a/src/evict.c
 +++ b/src/evict.c
 @@ -451,7 +451,7 @@ int overMaxmemoryAfterAlloc(size_t moremem) {
@@ -55,16 +65,14 @@ index a9e24a76..c806dd96 100644
          struct aeEventLoop *eventLoop, long long id, void *clientData) {
      UNUSED(eventLoop);
 diff --git a/src/networking.c b/src/networking.c
-index 90cc64d7..9b5897e4 100644
+index 90cc64d70..753008a77 100644
 --- a/src/networking.c
 +++ b/src/networking.c
-@@ -35,10 +35,14 @@
+@@ -35,10 +35,12 @@
  #include <sys/uio.h>
  #include <math.h>
  #include <ctype.h>
-+#ifdef HAVE_KRAIO
 +#include <kraio.h>
-+#endif
  
  static void setProtocolError(const char *errstr, client *c);
  int postponeClientRead(client *c);
@@ -73,7 +81,7 @@ index 90cc64d7..9b5897e4 100644
  
  /* Return the size consumed from the allocator, for the specified SDS string,
   * including internal fragmentation. This function is used in order to compute
-@@ -1816,12 +1820,322 @@ client *lookupClientByID(uint64_t id) {
+@@ -1816,12 +1818,314 @@ client *lookupClientByID(uint64_t id) {
      return (c == raxNotFound) ? NULL : c;
  }
  
@@ -227,10 +235,8 @@ index 90cc64d7..9b5897e4 100644
 +    write_callback_common(c, ret, handle_writev_callback);
 +}
 +
-+#ifdef HAVE_KRAIO
 +__attribute__((constructor)) void registWriteCallback() {register_write_callback(writeCallback);}
 +__attribute__((constructor)) void registWritevCallback() {register_writev_callback(writevCallback);}
-+#endif
 +
  /* This function should be called from _writeToClient when the reply list is not empty,
   * it gathers the scattered buffers from reply list and sends them away with connWritev.
@@ -270,7 +276,6 @@ index 90cc64d7..9b5897e4 100644
 +        offset = 0;
 +    }
 +    if (iovcnt == 0) return C_OK;
-+#ifdef HAVE_KRAIO
 +    if (!isEvictionProcRunning) {
 +        int ret = writev_async(c->conn->fd, iov, iovcnt);
 +        if (ret > 0) {
@@ -278,7 +283,6 @@ index 90cc64d7..9b5897e4 100644
 +            return C_OK;
 +        }
 +    }
-+#endif
 +    *nwritten = connWritev(c->conn, iov, iovcnt);
 +    if (*nwritten <= 0) return C_ERR;
 +
@@ -327,14 +331,12 @@ index 90cc64d7..9b5897e4 100644
 +        serverAssert(o->used >= c->ref_block_pos);
 +        /* Send current block if it is not fully sent. */
 +        if (o->used > c->ref_block_pos) {
-+#ifdef HAVE_KRAIO
 +            int ret = write_async(c->conn->fd, o->buf+c->ref_block_pos,
 +                                  o->used-c->ref_block_pos);
 +            if (ret > 0) {
 +                c->flags |= CLIENT_ASYNC;
 +                return C_OK;
 +            }
-+#endif
 +            *nwritten = connWrite(c->conn, o->buf+c->ref_block_pos,
 +                                  o->used-c->ref_block_pos);
 +            if (*nwritten <= 0) return C_ERR;
@@ -365,7 +367,6 @@ index 90cc64d7..9b5897e4 100644
 +        if (listLength(c->reply) == 0)
 +            serverAssert(c->reply_bytes == 0);
 +    } else if (c->bufpos > 0) {
-+#ifdef HAVE_KRAIO
 +        if (!isEvictionProcRunning) {
 +            int ret = write_async(c->conn->fd, c->buf + c->sentlen, c->bufpos - c->sentlen);
 +            if (ret > 0) {
@@ -373,7 +374,6 @@ index 90cc64d7..9b5897e4 100644
 +                return C_OK;
 +            }
 +        }
-+#endif
 +        *nwritten = connWrite(c->conn, c->buf + c->sentlen, c->bufpos - c->sentlen);
 +        if (*nwritten <= 0) return C_ERR;
 +        c->sentlen += *nwritten;
@@ -396,7 +396,7 @@ index 90cc64d7..9b5897e4 100644
      struct iovec iov[IOV_MAX];
      int iovcnt = 0;
      size_t iov_bytes_len = 0;
-@@ -1894,6 +2208,9 @@ static int _writevToClient(client *c, ssize_t *nwritten) {
+@@ -1894,6 +2198,9 @@ static int _writevToClient(client *c, ssize_t *nwritten) {
   * and 'nwritten' is an output parameter, it means how many bytes server write
   * to client. */
  int _writeToClient(client *c, ssize_t *nwritten) {
@@ -406,7 +406,7 @@ index 90cc64d7..9b5897e4 100644
      *nwritten = 0;
      if (getClientType(c) == CLIENT_TYPE_SLAVE) {
          serverAssert(c->bufpos == 0 && listLength(c->reply) == 0);
-@@ -1960,8 +2277,14 @@ int writeToClient(client *c, int handler_installed) {
+@@ -1960,8 +2267,14 @@ int writeToClient(client *c, int handler_installed) {
  
      ssize_t nwritten = 0, totwritten = 0;
  
@@ -422,7 +422,7 @@ index 90cc64d7..9b5897e4 100644
          totwritten += nwritten;
          /* Note that we avoid to send more than NET_MAX_WRITES_PER_EVENT
 diff --git a/src/server.c b/src/server.c
-index 9ca360ed..ff4bf169 100644
+index 9ca360ed4..ff4bf1692 100644
 --- a/src/server.c
 +++ b/src/server.c
 @@ -84,7 +84,7 @@ double R_Zero, R_PosInf, R_NegInf, R_Nan;
@@ -452,7 +452,7 @@ index 9ca360ed..ff4bf169 100644
  
  /* =========================== Server initialization ======================== */
 diff --git a/src/server.h b/src/server.h
-index 82e4db93..96a68c49 100644
+index 82e4db938..96a68c493 100644
 --- a/src/server.h
 +++ b/src/server.h
 @@ -288,6 +288,7 @@ extern int configOOMScoreAdjValuesDefaults[CONFIG_OOM_COUNT];
@@ -487,3 +487,6 @@ index 82e4db93..96a68c49 100644
  void evictionPoolAlloc(void);
  #define LFU_INIT_VAL 5
  unsigned long LFUGetTimeInMinutes(void);
+-- 
+2.24.1.windows.2
+
