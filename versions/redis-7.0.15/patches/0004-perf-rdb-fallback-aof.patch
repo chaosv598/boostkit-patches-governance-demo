@@ -2,9 +2,22 @@ From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
 From: boostkit-dev <dev@boostkit.local>
 Date: Mon, 13 Jul 2026 20:05:00 +0800
 Subject: [PATCH] redis-7.0.15-rdb-aof-fallback
-
+Description: |
+  Add AOF fallback when RDB load fails at startup. When the RDB file on
+  disk is corrupted / truncated / unreadable, Redis 7.0.15 calls exit(1)
+  immediately and the operator has to fix the file by hand before the
+  instance can come back up. This is a hard outage for any deployment
+  that does not run a hand on standby. If an AOF manifest is configured
+  (aof-use-rdb-preamble + appendonly yes), we now try loadAppendOnlyFiles()
+  once before giving up. On AOF_OK / AOF_TRUNCATED we continue startup with
+  an in-memory rebuild from the AOF stream, downgrade the failure to a
+  WARNING log line.
+Origin: https://github.com/redis/redis/pull/13579
 Upstream-Status: Submitted
 Upstream-PR: https://github.com/redis/redis/pull/13579
+Applies-To: redis 7.0.15
+Maintainer: twwang <twwang@boostkit>
+Last-Update: 2026-07-20
 Signed-off-by: boostkit-dev <dev@boostkit.local>
 
 Add AOF fallback when RDB load fails at startup.

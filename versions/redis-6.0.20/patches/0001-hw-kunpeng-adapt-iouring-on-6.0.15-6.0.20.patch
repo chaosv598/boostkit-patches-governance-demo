@@ -2,8 +2,16 @@ From 5c38b88bf5fccec343389dafe7ba1355bcd42ef9 Mon Sep 17 00:00:00 2001
 From: huyizhen <huyizhen2024@163.com>
 Date: Tue, 24 Feb 2026 21:26:01 +0800
 Subject: [PATCH] redis-6.0.15-6.0.20-adapt-iouring
-
+Description: |
+  Adapt io_uring subsystem for Kunpeng ARM: raise tcp-backlog from 511 to
+  2048 to match larger somaxconn / tcp_max_syn_backlog values on Kunpeng
+  servers; conditionally link -lkraio when HAVE_KRAIO is defined so the
+  upstream tree still compiles on non-Kunpeng CI runners.
+Origin: BoostKit internal (no upstream PR yet; awaiting vendor validation)
 Upstream-Status: Pending
+Applies-To: redis 6.0.20
+Maintainer: huyizhen <huyizhen2024@163.com>
+Last-Update: 2026-07-20
 Signed-off-by: huyizhen <huyizhen2024@163.com>
 
 ---

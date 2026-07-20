@@ -2,6 +2,12 @@ From deed3bde21389114d133f0b661ed89a29836613b Mon Sep 17 00:00:00 2001
 From: twwang1 <920347125@qq.com>
 Date: Mon, 16 Mar 2026 11:48:50 +0800
 Subject: [PATCH] dtoe (DMA-to-engine) network optimization on Kunpeng
+Description: |
+  Add DTOE (DMA-to-engine) async network path: ae_dtoe.c + ae_epoll_dtoe.c
+  implement an event loop variant that delegates TCP send/receive to the
+  Kunpeng DMA engine, bypassing the kernel socket layer for hot-path I/O.
+  Hooked in via src/Makefile and src/ae.h.
+Origin: BoostKit internal (Kunpeng HW feature; no upstream analog)
 MIME-Version: 1.0
 Content-Type: text/plain; charset=UTF-8
 Content-Transfer-Encoding: 8bit
@@ -10,6 +16,9 @@ Upstream-Status: Inappropriate
 Whitelist-Reason: |
   Kunpeng-specific DMA-to-engine HW feature; no upstream equivalent
   interface; reviewed by twwang@boostkit on 2026-06.
+Applies-To: redis 7.0.15
+Maintainer: twwang <twwang@boostkit>
+Last-Update: 2026-07-20
 Signed-off-by: twwang1 <920347125@qq.com>
 
 ---

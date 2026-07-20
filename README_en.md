@@ -10,10 +10,10 @@ Kunpeng BoostKit Redis is a **patch overlay** on top of upstream Redis. The repo
 pins a fixed upstream version and layers BoostKit-maintained ARM/Kunpeng optimization
 patches on top.
 
-**Core model**: version-centric + explicit `patches/series`. Aligned with industry-proven
-schemes — SUSE `kernel-source`, Debian Quilt `debian/patches/series`, Yocto/OpenEmbedded
-`Upstream-Status`, ungoogled-chromium `patches/series`. See
-[docs/governance.md §2](./docs/governance.md#2-industry-references).
+**Core model**: version-centric + explicit `patches/series`. Combined from 5 industry-proven
+schemes — **Yocto/OpenEmbedded** recipe fields + `Upstream-Status`, **DEP-3** patch header
+schema, **Buildroot** `apply-patches.sh`, **OpenWrt** `patches/series`, **Quilt/Debian** series.
+See [docs/governance.md §2](./docs/governance.md#2-industry-references).
 
 ## Repository Layout
 
@@ -23,34 +23,52 @@ boostkit-patches-governance-demo/
 ├── LICENSE.txt                          # Upstream license (full text)
 ├── .github/
 │   ├── PULL_REQUEST_TEMPLATE.md
+│   ├── lint_patch_headers.py            # DEP-3 6 required fields validator
+│   ├── lint_series.py                   # series consistency validator
 │   └── workflows/
 │       ├── ci.yml                       # 3 steps: verify + patch header lint + series lint
-│       └── build-perf.yml               # matrix: clean clone + make + memtier
+│       └── build-perf.yml               # skeleton workflow (matrix: clean apply + echo steps)
 ├── tools/
-│   └── verify.sh                        # root file hygiene + upstream.yaml + clean apply series
+│   ├── verify.sh                        # root hygiene + upstream.yaml schema (delegates apply)
+│   └── apply_patch.sh                   # ★ Buildroot-style series applier (single source)
 ├── docs/
-│   ├── governance.md                    # ★ Design rationale + industry references
+│   ├── governance.md                    # ★ Design rationale + 5 industry references
 │   ├── version-yaml-spec.md             # ★ Authoritative field definitions
 │   └── (product guides zh/en retained)
 └── versions/
     └── <upstream-id>/                   # e.g. redis-7.0.15
-        ├── upstream.yaml                # upstream pin
+        ├── upstream.yaml                # Yocto recipe fields + upstream pin + governance
         └── patches/
             ├── series                   # ★ Single source of truth for ordering
-            └── *.patch                  # RFC822 mail-style header + diff
+            └── *.patch                  # DEP-3 mail-style header (6 required) + diff
 ```
 
 ## Quick Start
 
 ### 1. Upstream pin + patch order at a glance
 
-`versions/redis-7.0.15/upstream.yaml`:
+`versions/redis-7.0.15/upstream.yaml` (Yocto recipe fields + upstream pin):
 
 ```yaml
+SUMMARY: "Redis in-memory data structure store with Kunpeng ARM optimizations"
+DESCRIPTION: |
+  Redis is an open source, in-memory data structure store used as a database,
+  cache, message broker, and streaming engine. BoostKit overlay.
+HOMEPAGE: "https://redis.io"
+LICENSE: "BSD-3-Clause"
+LIC_FILES_CHKSUM: "file://COPYING;md5=508cbf69e54be9b31b53b42e7411f8c4"
+SECTION: "network/database"
+
 upstream:
   repo: https://github.com/redis/redis
   version: 7.0.15
   commit: f35f36a265403c07b119830aa4bb3b7d71653ec9
+
+meta:
+  owner: twwang@boostkit
+  maintainer: twwang@boostkit
+  last_review: 2026-07-20
+  lifecycle: active
 ```
 
 `versions/redis-7.0.15/patches/series` (applied top-to-bottom):
@@ -66,31 +84,40 @@ upstream:
 
 ```bash
 # 1. Root hygiene + upstream.yaml schema + clean clone + apply series
+#    (delegates to tools/apply_patch.sh internally)
 bash tools/verify.sh
 
-# 2. Patch mail-style header schema (Yocto Upstream-Status aligned)
+# 2. DEP-3 patch header schema (6 required: Description/Origin/Upstream-Status/Applies-To/Maintainer/Last-Update)
 python3 .github/lint_patch_headers.py versions/*/patches/
 
 # 3. Series consistency (no orphans, no duplicates)
 python3 .github/lint_series.py versions/*/patches/
 ```
 
+### 2.5 Standalone series apply (Buildroot-style)
+
+```bash
+bash tools/apply_patch.sh \
+    https://github.com/redis/redis \
+    f35f36a265403c07b119830aa4bb3b7d71653ec9 \
+    versions/redis-7.0.15/patches/series \
+    versions/redis-7.0.15/patches \
+    /tmp/build
+```
+
 ### 3. Build on Kunpeng
 
 ```bash
-# Follow "Local repro" in docs/governance.md §3.2
-# 1) clean clone + apply series
-git clone --depth=1 https://github.com/redis/redis
-cd redis
-git fetch origin f35f36a265403c07b119830aa4bb3b7d71653ec9
-git checkout f35f36a265403c07b119830aa4bb3b7d71653ec9
-while read p; do
-  [ -z "$p" ] && continue
-  [[ "$p" == \#* ]] && continue
-  git apply "../versions/redis-7.0.15/patches/$p"
-done < ../versions/redis-7.0.15/patches/series
+# 1) clean clone + apply series (Buildroot-style single source)
+bash tools/apply_patch.sh \
+    https://github.com/redis/redis \
+    f35f36a265403c07b119830aa4bb3b7d71653ec9 \
+    versions/redis-7.0.15/patches/series \
+    versions/redis-7.0.15/patches \
+    /tmp/build
 
-# 2) build
+# 2) build (requires BoostKit KRAIO kernel module)
+cd /tmp/build/upstream
 make distclean && make -j$(nproc) -DHAVE_KRAIO
 ```
 
@@ -109,20 +136,21 @@ make distclean && make -j$(nproc) -DHAVE_KRAIO
 - **Field definitions**: [docs/version-yaml-spec.md](./docs/version-yaml-spec.md)
 - **Operations (add/retire patch)**: [docs/governance.md §4](./docs/governance.md#4-common-operations)
 
-Industry references:
-- Quilt / Debian `debian/patches/series` — top-to-bottom order list
-- SUSE `kernel-source/series.conf` — explicit list + `Git-commit` metadata validation
-- Yocto/OpenEmbedded `Upstream-Status` — 8-state semantics aligned
-- ungoogled-chromium `patches/series` — version pin ↔ patches separation
-- openEuler `apply-patches` — series + guards (future extension)
+Industry references (5-way alignment):
+- **Yocto/OpenEmbedded** — recipe fields (SUMMARY/LICENSE/HOMEPAGE/LIC_FILES_CHKSUM/SECTION) +
+  `Upstream-Status` 8-state semantics
+- **DEP-3** (Debian) — patch header schema with 6 required fields
+- **Buildroot** `apply-patches.sh` — series applier single source
+- **OpenWrt** `patches/series` + `patch-kernel.sh` — per-package series format
+- **Quilt/Debian** `debian/patches/series` — top-to-bottom order list
 
 ## Contributing
 
 PR-only workflow. No direct pushes to master.
 
-1. Add patch → modify one line in `patches/series` + write mail-style header
+1. Add patch → write DEP-3 header (6 required) + modify one line in `patches/series`
 2. Run all 3 local tools, all green
-3. Open PR → triggers `ci.yml` 3 steps + `build-perf.yml` matrix
+3. Open PR → triggers `ci.yml` 3 steps + `build-perf.yml` matrix (skeleton)
 4. Maintainer review → merge
 
 ## License
@@ -133,6 +161,11 @@ PR-only workflow. No direct pushes to master.
 
 ## Change Log
 
+- **2026-07-20** v3.0: combine Yocto recipe fields + DEP-3 patch header + Buildroot
+  `apply-patches.sh`. New: `tools/apply_patch.sh` (single source series applier),
+  `upstream.yaml` Yocto-style fields (SUMMARY/LICENSE/HOMEPAGE/LIC_FILES_CHKSUM/SECTION),
+  DEP-3 6-required fields in patch headers (Description/Origin/Upstream-Status/
+  Applies-To/Maintainer/Last-Update).
 - **2026-07-20** v2.0 refactor: slim down to `version-centric + patches/series` model.
   Removed `sync-manifest.py` / `whitelist-audit.py` / `build-perf.sh` / generated manifest
   files. Patch metadata migrated to mail-style headers. Aligned with SUSE / Debian Quilt /

@@ -1,9 +1,17 @@
 From: twwang1 <920347125@qq.com>
 Date: Mon, 17 Jul 2026 00:00:00 +0800
 Subject: [PATCH] redis-7.0.15-adapt-iouring-kunpeng-arm
-
+Description: |
+  Adapt io_uring for Kunpeng ARM by raising tcp-backlog from 511 to 2048,
+  which matches the larger somaxconn / tcp_max_syn_backlog values used on
+  Kunpeng servers. Conditionally links -lkraio only when HAVE_KRAIO is
+  defined so the upstream tree still compiles on non-Kunpeng CI runners.
+Origin: https://github.com/redis/redis/pull/12345
 Upstream-Status: Submitted
 Upstream-PR: https://github.com/redis/redis/pull/12345
+Applies-To: redis 7.0.15
+Maintainer: twwang <twwang@boostkit>
+Last-Update: 2026-07-20
 Signed-off-by: twwang1 <920347125@qq.com>
 
 Adapt io_uring for Kunpeng ARM by raising tcp-backlog from 511 to 2048,

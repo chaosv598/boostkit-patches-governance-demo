@@ -3,15 +3,22 @@
 #
 # 检查 3 件事(其他职责移到 .github/ lint 脚本):
 #   1. 仓根禁放检查(防误提交 upstream 源码/Dockerfile/Makefile 等)
-#   2. versions/<v>/upstream.yaml schema(40-char SHA、必填字段)
-#   3. 干净 upstream apply:clone upstream → 切到 commit → 按 series 顺序 apply 每条 patch
+#   2. versions/<v>/upstream.yaml schema(Yocto recipe 字段 + 上游 pin 校验)
+#   3. 干净 upstream apply:委托给 tools/apply_patch.sh
+#      (Buildroot/OpenWrt 风格的 series 应用器,单点实现)
 #
 # 用法: bash tools/verify.sh
+# 环境变量:
+#   VERIFY_STRICT=0   任何 apply 失败即 exit 1 (hard-fail)
+#   VERIFY_STRICT=1   apply 失败降级 warning (默认,跟传统 verify.sh 一致)
 # 退出码: 0 全过 / 1 有失败
 set -e
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+
+# 非严格 = 默认 1 (apply 失败降级 warning);VERIFY_STRICT=0 改为严格
+export APPLY_NON_STRICT="${VERIFY_STRICT:-1}"
 
 errs=0
 
@@ -61,7 +68,7 @@ for vdir in versions/*/; do
         continue
     fi
 
-    # 读 upstream.yaml(python,保留顺序 + 校验 SHA 40-char)
+    # 读 upstream.yaml(python,保留顺序 + 校验 SHA 40-char + Yocto 字段)
     read_vars=$(python3 - "$uyaml" <<'PYEOF'
 import sys, json, yaml, re
 from pathlib import Path
@@ -75,6 +82,7 @@ up = m.get("upstream", {}) or {}
 meta = m.get("meta", {}) or {}
 
 errs = []
+# === upstream pin (必填 + SHA 格式校验) ===
 if not isinstance(up, dict) or not up.get("repo"):
     errs.append("missing upstream.repo")
 if not up.get("version"):
@@ -85,7 +93,13 @@ if not commit:
 elif not re.fullmatch(r"[0-9a-f]{40}", commit or ""):
     errs.append(f"upstream.commit must be 40-char SHA, got {commit!r}")
 
-# meta 字段可选,但 owner 推荐填
+# === Yocto recipe 字段(强推荐)— 不填只 warning,不阻塞 ===
+yocto_warn = []
+for f in ("SUMMARY", "LICENSE", "HOMEPAGE"):
+    if not m.get(f):
+        yocto_warn.append(f"{f} missing (Yocto-style recipe field)")
+
+# === meta.owner 推荐填 ===
 if meta and not meta.get("owner"):
     errs.append("meta.owner missing (recommended)")
 
@@ -93,7 +107,11 @@ out = {
     "repo": up.get("repo", ""),
     "version": up.get("version", ""),
     "commit": commit,
+    "summary": m.get("SUMMARY", ""),
+    "license": m.get("LICENSE", ""),
+    "homepage": m.get("HOMEPAGE", ""),
     "errs": errs,
+    "warns": yocto_warn,
 }
 print(json.dumps(out))
 PYEOF
@@ -113,6 +131,9 @@ PYEOF
         continue
     fi
 
+    PYWARNS=$(python3 -c "import json,sys; d=json.loads(sys.argv[1]); print('\n'.join(d.get('warns',[])))" "$read_vars")
+    [ -n "$PYWARNS" ] && echo "$PYWARNS" | sed "s/^/  ⚠ $vname: /"
+
     REPO=$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['repo'])" "$read_vars")
     SHA=$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['commit'])" "$read_vars")
     VERSION=$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['version'])" "$read_vars")
@@ -127,48 +148,17 @@ PYEOF
 
     echo "  ✓ $vname: upstream @ $VERSION ($SHA), series ${#series_entries[@]} 条"
 
-    # 3. clean upstream apply
+    # === 3. 委托 tools/apply_patch.sh(单点实现)===
     WORK=$(mktemp -d)
-    if ! git clone --quiet --no-checkout "$REPO" "$WORK/r" 2>/dev/null; then
-        echo "  ⚠ $vname: clone $REPO 失败(跳过 apply 验证)"
-        rm -rf "$WORK"
-        continue
-    fi
-
-    if (cd "$WORK/r" && git cat-file -t "$SHA" >/dev/null 2>&1); then
-        (cd "$WORK/r" && git checkout --quiet "$SHA" 2>/dev/null) || {
-            echo "  ⚠ $vname: checkout $SHA 失败,跳过"
-            rm -rf "$WORK"
-            continue
-        }
-    elif [ -n "$VERSION" ] && (cd "$WORK/r" && git checkout --quiet "$VERSION" 2>/dev/null); then
-        echo "  ⚠ $vname: SHA $SHA 不可达,改用 tag $VERSION"
+    if bash "$ROOT/tools/apply_patch.sh" \
+        "$REPO" "$SHA" "$series_file" "$patches_dir" "$WORK" 2>&1 | sed 's/^/    /'; then
+        : # 成功
     else
-        echo "  ⚠ $vname: SHA $SHA 和 tag 都不存在,跳过 apply 验证"
-        rm -rf "$WORK"
-        continue
+        rc=$?
+        # 非严格模式时 apply_patch.sh 会 exit 0 即使有 warning;rc!=0 时才是 hard 失败
+        echo "  ✗ $vname: apply_patch.sh 退出 (rc=$rc)"
+        errs=$((errs+1))
     fi
-
-    # 按 series 顺序 apply
-    for pfile in "${series_entries[@]}"; do
-        # 去除行尾空白
-        pfile=$(echo "$pfile" | sed 's/[[:space:]]*$//')
-        [ -z "$pfile" ] && continue
-        if [ ! -f "$OLDPWD/$vdir"patches/"$pfile" ]; then
-            echo "  ✗ $vname/$pfile: series 引用了不存在的 .patch"
-            errs=$((errs+1))
-            continue
-        fi
-        # 先 --check 看是否真的能 apply。
-        # 失败降级为 warning(跟传统 verify.sh 一致),
-        # 因为仓里可能有"已知 broken 等待 owner rebase"的 patch。
-        if (cd "$WORK/r" && git apply --check "$OLDPWD/$vdir"patches/"$pfile" 2>&1 >/dev/null); then
-            (cd "$WORK/r" && git apply "$OLDPWD/$vdir"patches/"$pfile" 2>/dev/null)
-            echo "  ✓ $vname/$pfile"
-        else
-            echo "  ⚠ $vname/$pfile: apply 失败(可能 baseline 不匹配 / 与前面的 patch 冲突,owner 检查)"
-        fi
-    done
     rm -rf "$WORK"
     vcount=$((vcount+1))
 done

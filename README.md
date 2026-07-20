@@ -9,9 +9,14 @@ Kunpeng BoostKit Redis
 Kunpeng BoostKit Redis 是基于上游 Redis 的 patch overlay,在固定上游版本基线上叠加
 BoostKit 团队维护的 ARM/Kunpeng 平台优化 patch。
 
-**核心模型**:version-centric + 显式 `patches/series`(对齐 SUSE / Debian Quilt /
-Yocto OpenEmbedded / ungoogled-chromium 等业界主流方案,见
-[docs/governance.md §2](./docs/governance.md#2-业界出处))。
+**核心模型**:version-centric + 显式 `patches/series`(**集合 5 家业界方案之长**):
+- **Yocto/OpenEmbedded** recipe 字段 + `Upstream-Status` 8 状态语义
+- **DEP-3** patch 头 schema(6 必填)
+- **Buildroot** `apply-patches.sh` 单点 series 应用器
+- **OpenWrt** `patches/series` 行格式
+- **Quilt/Debian** `debian/patches/series` 顺序语义
+
+见 [docs/governance.md §2](./docs/governance.md#2-业界出处集合-5-家)。
 
 ## 目录结构
 
@@ -21,34 +26,52 @@ boostkit-patches-governance-demo/
 ├── LICENSE.txt                          # 上游 license 全文
 ├── .github/
 │   ├── PULL_REQUEST_TEMPLATE.md
+│   ├── lint_patch_headers.py            # DEP-3 6 必填字段校验
+│   ├── lint_series.py                   # series 一致性校验
 │   └── workflows/
 │       ├── ci.yml                       # 3 步:verify + patch 头 lint + series lint
-│       └── build-perf.yml               # matrix: clean clone + make + memtier
+│       └── build-perf.yml               # 骨架演示 workflow(matrix + clean apply 真跑 + 后续 echo)
 ├── tools/
-│   └── verify.sh                        # 仓根禁放 + upstream.yaml + clean apply series
+│   ├── verify.sh                        # 仓根禁放 + upstream.yaml schema(委托 apply_patch.sh)
+│   └── apply_patch.sh                   # ★ Buildroot 风格 series 应用器(单点实现)
 ├── docs/
-│   ├── governance.md                    # ★ 设计原理 + 业界出处
+│   ├── governance.md                    # ★ 设计原理 + 5 家业界出处
 │   ├── version-yaml-spec.md             # ★ 字段权威定义
 │   └── (产品指南 zh/en 保留)
 └── versions/
     └── <upstream-id>/                   # 例如 redis-7.0.15
-        ├── upstream.yaml                # 上游基线
+        ├── upstream.yaml                # Yocto recipe 字段 + upstream pin + 治理归属
         └── patches/
             ├── series                   # ★ 唯一权威顺序
-            └── *.patch                  # RFC822 邮件式头 + diff
+            └── *.patch                  # DEP-3 邮件式头(6 必填)+ diff
 ```
 
 ## 快速开始
 
 ### 1. 上游基线 + patch 顺序一目了然
 
-`versions/redis-7.0.15/upstream.yaml`:
+`versions/redis-7.0.15/upstream.yaml`(Yocto recipe 段 + upstream pin):
 
 ```yaml
+SUMMARY: "Redis in-memory data structure store with Kunpeng ARM optimizations"
+DESCRIPTION: |
+  Redis is an open source, in-memory data structure store used as a database,
+  cache, message broker, and streaming engine. BoostKit overlay.
+HOMEPAGE: "https://redis.io"
+LICENSE: "BSD-3-Clause"
+LIC_FILES_CHKSUM: "file://COPYING;md5=508cbf69e54be9b31b53b42e7411f8c4"
+SECTION: "network/database"
+
 upstream:
   repo: https://github.com/redis/redis
   version: 7.0.15
   commit: f35f36a265403c07b119830aa4bb3b7d71653ec9
+
+meta:
+  owner: twwang@boostkit
+  maintainer: twwang@boostkit
+  last_review: 2026-07-20
+  lifecycle: active
 ```
 
 `versions/redis-7.0.15/patches/series`(自上而下应用):
@@ -64,31 +87,40 @@ upstream:
 
 ```bash
 # 1. 仓根干净 + upstream.yaml schema + clean clone + 按 series apply
+#    (内部委托给 tools/apply_patch.sh,Buildroot 风格)
 bash tools/verify.sh
 
-# 2. patch 邮件式头 schema(对齐 Yocto Upstream-Status)
+# 2. DEP-3 patch 头 schema 校验(6 必填:Description/Origin/Upstream-Status/Applies-To/Maintainer/Last-Update)
 python3 .github/lint_patch_headers.py versions/*/patches/
 
 # 3. series 一致性(无孤儿 + 无重复)
 python3 .github/lint_series.py versions/*/patches/
 ```
 
+### 2.5 单独跑 series apply(Buildroot 风格)
+
+```bash
+bash tools/apply_patch.sh \
+    https://github.com/redis/redis \
+    f35f36a265403c07b119830aa4bb3b7d71653ec9 \
+    versions/redis-7.0.15/patches/series \
+    versions/redis-7.0.15/patches \
+    /tmp/build
+```
+
 ### 3. 在 Kunpeng 上构建
 
 ```bash
-# 按 governance.md §3.2 "本地复跑" 章节的步骤
-# 1) clean clone + apply series
-git clone --depth=1 https://github.com/redis/redis
-cd redis
-git fetch origin f35f36a265403c07b119830aa4bb3b7d71653ec9
-git checkout f35f36a265403c07b119830aa4bb3b7d71653ec9
-while read p; do
-  [ -z "$p" ] && continue
-  [[ "$p" == \#* ]] && continue
-  git apply "../versions/redis-7.0.15/patches/$p"
-done < ../versions/redis-7.0.15/patches/series
+# 1) clean clone + apply series(走 tools/apply_patch.sh,Buildroot 风格单点实现)
+bash tools/apply_patch.sh \
+    https://github.com/redis/redis \
+    f35f36a265403c07b119830aa4bb3b7d71653ec9 \
+    versions/redis-7.0.15/patches/series \
+    versions/redis-7.0.15/patches \
+    /tmp/build
 
-# 2) build
+# 2) build(需 BoostKit 内核自带 KRAIO SDK RPM)
+cd /tmp/build/upstream
 make distclean && make -j$(nproc) -DHAVE_KRAIO
 ```
 
@@ -107,20 +139,20 @@ make distclean && make -j$(nproc) -DHAVE_KRAIO
 - **字段权威定义**:[docs/version-yaml-spec.md](./docs/version-yaml-spec.md)
 - **操作步骤(新增/废弃 patch 等)**:[docs/governance.md §4](./docs/governance.md#4-常见操作)
 
-业界出处:
-- Quilt / Debian `debian/patches/series` — 自上而下顺序清单
-- SUSE `kernel-source/series.conf` — 显式清单 + `Git-commit` 元数据校验
-- Yocto/OpenEmbedded `Upstream-Status` 字段 — 8 状态语义对齐
-- ungoogled-chromium `patches/series` — version pin ↔ patches 分离
-- openEuler `apply-patches` — series + guards(未来扩展)
+业界出处(5 家):
+- **Yocto/OpenEmbedded** — recipe 字段(SUMMARY/LICENSE/HOMEPAGE/LIC_FILES_CHKSUM/SECTION)+ `Upstream-Status` 8 状态
+- **DEP-3** (Debian) — patch 头 schema + 6 必填字段
+- **Buildroot** `apply-patches.sh` — series 应用器单点实现
+- **OpenWrt** `patches/series` — 行格式
+- **Quilt/Debian** `debian/patches/series` — 顺序语义
 
 ## 贡献
 
 只接受 PR,不接受直推 master。流程:
 
-1. 新增 patch → 修改 `patches/series` 一行 + 写邮件式头
+1. 新增 patch → 写 DEP-3 头(6 必填)+ 修改 `patches/series` 一行
 2. 跑本地 3 工具全绿
-3. 开 PR,触发 `ci.yml` 3 步 + `build-perf.yml` matrix
+3. 开 PR,触发 `ci.yml` 3 步 + `build-perf.yml` matrix(骨架)
 4. 维护者 review → merge
 
 ## 许可证
@@ -131,6 +163,11 @@ make distclean && make -j$(nproc) -DHAVE_KRAIO
 
 ## 变更通知
 
+- **2026-07-20** v3.0:集合 Yocto recipe 字段 + DEP-3 patch 头 + Buildroot
+  `apply-patches.sh`。新增 `tools/apply_patch.sh`(单点 series 应用器),
+  `upstream.yaml` 加 Yocto 字段(SUMMARY/LICENSE/HOMEPAGE/LIC_FILES_CHKSUM/
+  SECTION),patch 头换 DEP-3 6 必填(Description/Origin/Upstream-Status/
+  Applies-To/Maintainer/Last-Update)。
 - **2026-07-20** v2.0 重构:精简到 `version-centric + patches/series` 模型,
   删除 `sync-manifest.py` / `whitelist-audit.py` / `build-perf.sh` / 派生 manifest 文件;
   patch 元数据迁到邮件式头;对齐 SUSE / Debian Quilt / Yocto 等业界方案。
