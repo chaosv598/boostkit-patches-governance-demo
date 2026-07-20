@@ -1,0 +1,8 @@
+upstream:
+  repo: https://github.com/redis/redis
+  version: 6.0.20
+  commit: de0d9632b52849d9b7ea52408b1d681d771c5b46
+
+meta:
+  owner: huyizhen@boostkit
+  description: Redis 6.0.20 patch overlay (BoostKit, cross-upgrade from 6.0.15)

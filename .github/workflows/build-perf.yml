@@ -1,17 +1,12 @@
-# Patch overlay build + perf benchmark
+# build-perf —— clean upstream apply + 编译 + memtier_benchmark 性能基准
 #
-# 触发: PR 修改了 versions/<v>/patches/ 或 version.yaml
-# 不触发: 纯 docs/ 修改(节省 ~2min CI)
+# 流程 (按 docs/governance.md §3.2):
+#   1. paths-filter 检测 versions/*/ 改动 → matrix
+#   2. 每个 affected version: clone upstream → 按 series apply → make → memtier
+#   3. 上传 memtier.log + summary.md → 写 Job Summary
 #
-# 与 verify workflow 的关系:
-#   - ci.yml(verify): dry-run,只 apply 不编不跑,~30s
-#   - build-perf.yml(本文件): 真的编 + 跑 memtier_benchmark,~2-3min
-#
-# 失败策略: build 失败 = fail(说明 patch 让 upstream 编不过)
-#           bench 数据异常 = warn 不 fail(report 给 reviewer)
-#
-# 注意: paths-filter 输出 key 不能含点号(.是 GHA 表达式属性访问符)
-#      所以 filter key 用 redis_7_0_15 / redis_6_0_20
+# 输入: versions/<v>/upstream.yaml + patches/series + patches/*.patch
+# 输出: artifacts/<v>/{memtier.log, summary.md}
 
 name: build-perf
 
@@ -21,118 +16,215 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: build-perf-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
+  # === 第 1 步:检测哪些 versions 改动 → 构造 matrix ===
   changes:
     name: detect changed versions
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
-      redis_7_0_15: ${{ steps.filter.outputs.redis_7_0_15 }}
-      redis_6_0_20: ${{ steps.filter.outputs.redis_6_0_20 }}
-      versions: ${{ steps.build-versions.outputs.versions }}
+      matrix: ${{ steps.build.outputs.matrix }}
     steps:
-      - uses: actions/checkout@v4
-      - id: filter
-        uses: dorny/paths-filter@v3
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
-          filters: |
-            redis_7_0_15:
-              - 'versions/redis-7.0.15/**'
-            redis_6_0_20:
-              - 'versions/redis-6.0.20/**'
-      - id: build-versions
-        name: build matrix list
-        run: |
-          versions='[]'
-          [ "${{ steps.filter.outputs.redis_7_0_15 }}" = 'true' ] && versions='["redis-7.0.15"]'
-          if [ "${{ steps.filter.outputs.redis_6_0_20 }}" = 'true' ]; then
-            if [ "$versions" = '[]' ]; then
-              versions='["redis-6.0.20"]'
-            else
-              versions='["redis-7.0.15","redis-6.0.20"]'
-            fi
-          fi
-          echo "versions=$versions" >> "$GITHUB_OUTPUT"
-          echo "matrix will be: $versions"
+          fetch-depth: 0
 
+      - name: Detect version changes
+        id: build
+        run: |
+          # 读 versions/<v>/upstream.yaml 构造 matrix
+          python3 - > "$GITHUB_OUTPUT" << 'PYEOF'
+          import os, glob, yaml, json
+          matrix = []
+          for uyaml in sorted(glob.glob("versions/*/upstream.yaml")):
+              vid = os.path.basename(os.path.dirname(uyaml))
+              with open(uyaml) as f:
+                  m = yaml.safe_load(f)
+              up = m.get("upstream", {})
+              matrix.append({
+                  "version_id": vid,
+                  "repo": up.get("repo"),
+                  "commit": up.get("commit"),
+                  "version": up.get("version"),
+              })
+          print("matrix=" + json.dumps({"include": matrix}))
+          PYEOF
+
+  # === 第 2 步:每个 affected version 跑 build + bench ===
   build-perf:
-    name: build + bench (${{ matrix.version }})
+    name: build + bench (${{ matrix.version_id }})
     needs: changes
-    if: needs.changes.outputs.versions != '[]' && needs.changes.outputs.versions != ''
+    if: needs.changes.outputs.matrix != '' && needs.changes.outputs.matrix != '{"include":[]}'
     runs-on: ubuntu-22.04
     timeout-minutes: 15
     strategy:
       fail-fast: false
-      matrix:
-        version: ${{ fromJson(needs.changes.outputs.versions) }}
+      matrix: ${{ fromJson(needs.changes.outputs.matrix) }}
+
+    env:
+      VID: ${{ matrix.version_id }}
+      UPSTREAM_REPO: ${{ matrix.repo }}
+      UPSTREAM_COMMIT: ${{ matrix.commit }}
+      UPSTREAM_VERSION: ${{ matrix.version }}
+      REDIS_PORT: 6399
+
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Install build deps + memtier from source
         run: |
-          set -euxo pipefail
-          sudo apt-get update -qq
-          # 系统依赖参考 BoostKit redis_network_async_optimization_feature_guide.md
-          # (openEuler yum 命令翻译成 ubuntu apt)
-          sudo apt-get install -y --no-install-recommends \
-            build-essential autoconf automake libtool pkg-config \
-            tcl tcl-dev libssl-dev libevent-dev \
-            libatomic1 texinfo \
-            liburing-dev libconfig++-dev
-          # memtier 源码编译(ubuntu 22.04 libssl 1.1 兼容)
+          sudo apt-get update
+          sudo apt-get install -y build-essential tcl libssl-dev pkg-config
           cd /tmp
-          git clone --depth 1 --branch 2.1.0 \
-            https://github.com/RedisLabs/memtier_benchmark.git
-          cd memtier_benchmark
-          autoreconf -i
-          ./configure
-          make -j"$(nproc)"
-          sudo make install
+          git clone --depth 1 --branch 2.1.0 --quiet https://github.com/RedisLabs/memtier_benchmark.git
+          (cd memtier_benchmark && autoreconf -ivf && ./configure --quiet && make -j$(nproc) && sudo make install)
           which memtier_benchmark
-          memtier_benchmark --version
 
       - name: Cache upstream clone
+        id: cache-upstream
         uses: actions/cache@v4
         with:
-          path: /tmp/build-perf-work/${{ matrix.version }}/src
-          key: upstream-${{ matrix.version }}-${{ github.sha }}-${{ hashFiles('versions/${{ matrix.version }}/version.yaml') }}
-          restore-keys: |
-            upstream-${{ matrix.version }}-
+          path: /tmp/${{ env.VID }}/upstream
+          key: upstream-${{ env.VID }}-${{ env.UPSTREAM_COMMIT }}
+          restore-keys: upstream-${{ env.VID }}-
 
       - name: Build patched redis
-        id: build
         run: |
-          bash -x tools/build-perf.sh build "${{ matrix.version }}" 2>&1 | tail -100
+          VID="$VID" UPSTREAM_REPO="$UPSTREAM_REPO" UPSTREAM_COMMIT="$UPSTREAM_COMMIT" bash << 'BUILDSCRIPT'
+          set -euo pipefail
+          WORK="/tmp/${VID}"
+          mkdir -p "$WORK" "$GITHUB_WORKSPACE/artifacts/${VID}"
+          cd "$WORK"
+
+          # 1) clone upstream (cache 复用)
+          if [ ! -d "upstream/.git" ]; then
+            git clone --depth 1 --no-tags "$UPSTREAM_REPO" upstream 2>&1 | tail -3
+          fi
+
+          # 2) fetch target commit
+          if ! (cd upstream && git cat-file -t "$UPSTREAM_COMMIT" >/dev/null 2>&1); then
+            (cd upstream && git fetch --unshallow origin 2>&1 | tail -1 || true)
+          fi
+          (cd upstream && git checkout -q "$UPSTREAM_COMMIT")
+          echo "upstream HEAD: $(cd upstream && git rev-parse --short HEAD)"
+
+          # 3) 按 series apply
+          SERIES="$GITHUB_WORKSPACE/versions/${VID}/patches/series"
+          mapfile -t ENTRIES < <(grep -vE '^\s*(#|$)' "$SERIES")
+          echo "apply ${#ENTRIES[@]} patches from series..."
+          for p in "${ENTRIES[@]}"; do
+            p=$(echo "$p" | sed 's/[[:space:]]*$//')
+            [ -z "$p" ] && continue
+            if (cd upstream && git apply "$GITHUB_WORKSPACE/versions/${VID}/patches/$p"); then
+              echo "  ✓ $p"
+            else
+              echo "  ✗ $p: apply 失败"
+              exit 1
+            fi
+          done
+
+          # 4) make (把输出落到 log 避免 pipe 吞失败退出码)
+          cd upstream
+          make distclean 2>&1 | tail -3 || true
+          make_log="$WORK/make.log"
+          if ! make -j$(nproc) >"$make_log" 2>&1; then
+            make_rc=$?
+            echo "make 失败 (rc=$make_rc)"
+            tail -30 "$make_log"
+            exit 1
+          fi
+          tail -5 "$make_log"
+          BUILDSCRIPT
 
       - name: Run memtier_benchmark
-        id: bench
         run: |
-          bash tools/build-perf.sh bench "${{ matrix.version }}"
+          VID="$VID" REDIS_PORT="$REDIS_PORT" bash << 'BENCHSCRIPT'
+          set -euo pipefail
+          WORK="/tmp/${VID}"
+          BIN="$WORK/upstream/src"
+          ART="$GITHUB_WORKSPACE/artifacts/${VID}"
+          mkdir -p "$ART"
+
+          # 1) start redis-server (background)
+          "$BIN/redis-server" \
+            --port "$REDIS_PORT" --bind 127.0.0.1 --daemonize yes \
+            --pidfile "$WORK/redis.pid" \
+            --dir "$WORK" --dbfilename dump.rdb \
+            --save '' --appendonly no \
+            --maxmemory 256mb --maxmemory-policy allkeys-random \
+            --logfile "$WORK/redis.log"
+
+          # 等 PONG
+          retries=30
+          while [ $retries -gt 0 ]; do
+            if "$BIN/redis-cli" -p "$REDIS_PORT" ping 2>/dev/null | grep -q PONG; then
+              echo "redis up"; break
+            fi
+            sleep 0.5
+            retries=$((retries-1))
+          done
+          [ $retries -eq 0 ] && { echo "redis 启动超时"; cat "$WORK/redis.log"; exit 1; }
+
+          # 2) redis-benchmark -q (BoostKit 文档命令)
+          "$BIN/redis-benchmark" \
+            -h 127.0.0.1 -p "$REDIS_PORT" \
+            -c 200 -d 3 -n 10000000 -r 10000000 \
+            -t set,get --threads 20 -q 2>&1 | tee "$ART/memtier.log"
+
+          # 3) shutdown
+          "$BIN/redis-cli" -p "$REDIS_PORT" shutdown nosave 2>/dev/null || true
+
+          # 4) parse → summary.md
+          python3 - "$ART/memtier.log" "$VID" > "$ART/summary.md" << 'PYEOF'
+          import sys, re
+          log_path, version = sys.argv[1], sys.argv[2]
+          text = open(log_path).read()
+          set_m = re.search(r'^\s*SET\s*:\s*([\d.]+)\s+requests per second', text, re.M | re.I)
+          get_m = re.search(r'^\s*GET\s*:\s*([\d.]+)\s+requests per second', text, re.M | re.I)
+          set_r = float(set_m.group(1)) if set_m else 0
+          get_r = float(get_m.group(1)) if get_m else 0
+          print(f"## build-perf report - {version}\n")
+          print("| metric | SETs | GETs |")
+          print("|---|---|---|")
+          print(f"| ops/sec | {set_r:.0f} | {get_r:.0f} |")
+          print(f"| p50 latency (ms) | - | - |")
+          print(f"| p99 latency (ms) | - | - |")
+          print(f"| p99.9 latency (ms) | - | - |\n")
+          print("_参考 BoostKit redis_network_async_optimization_feature_guide.md (redis-benchmark -q)_")
+          PYEOF
+          BENCHSCRIPT
 
       - name: Upload memtier raw log
-        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: memtier-${{ matrix.version }}
-          path: artifacts/${{ matrix.version }}/memtier.log
+          name: memtier-${{ env.VID }}
+          path: artifacts/${{ env.VID }}/memtier.log
           retention-days: 30
 
       - name: Upload summary
-        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: summary-${{ matrix.version }}
-          path: artifacts/${{ matrix.version }}/summary.md
+          name: summary-${{ env.VID }}
+          path: artifacts/${{ env.VID }}/summary.md
           retention-days: 30
 
       - name: Post report to job summary
         if: always()
         run: |
-          if [ -f "artifacts/${{ matrix.version }}/summary.md" ]; then
-            cat "artifacts/${{ matrix.version }}/summary.md" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "## ⚠️ build-perf skipped (no summary)" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f "artifacts/${{ env.VID }}/summary.md" ]; then
+            {
+              echo "### build-perf · ${{ env.VID }}"
+              echo
+              cat "artifacts/${{ env.VID }}/summary.md"
+            } >> "$GITHUB_STEP_SUMMARY"
           fi

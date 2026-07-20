@@ -1,0 +1,8 @@
+upstream:
+  repo: https://github.com/redis/redis
+  version: 7.0.15
+  commit: f35f36a265403c07b119830aa4bb3b7d71653ec9
+
+meta:
+  owner: twwang@boostkit
+  description: Redis 7.0.15 patch overlay (BoostKit)

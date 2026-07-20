@@ -1,0 +1,9 @@
+# 系列:redis-7.0.15 patch 应用顺序
+# 每行一个 patch 路径(相对本目录),自上而下应用
+# filename 仅辅助阅读/检索,顺序由本文件权威定义
+# 注释(#)与空行可自由使用
+
+0001-hw-kunpeng-adapt-iouring.patch
+0002-perf-kunpeng-adapt-dtoe.patch
+0003-perf-jemalloc-arm64-pointer-tag-and-gc.patch
+0004-perf-rdb-fallback-aof.patch

@@ -3,6 +3,9 @@ From: huyizhen <huyizhen2024@163.com>
 Date: Tue, 24 Feb 2026 21:26:01 +0800
 Subject: [PATCH] redis-6.0.15-6.0.20-adapt-iouring
 
+Upstream-Status: Pending
+Signed-off-by: huyizhen <huyizhen2024@163.com>
+
 ---
  src/Makefile     |  2 +-
  src/networking.c | 56 +++++++++++++++++++++++++++++-------------------

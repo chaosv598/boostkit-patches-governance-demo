@@ -1,155 +1,136 @@
-﻿# Redis 网络优化特性
+# Redis 网络优化特性
 
 ## 项目品牌名称
 
 Kunpeng BoostKit Redis
 
-## 变更通知
-
-- [2026.03.05]：重构README。
-- [2025.03.30]：新增Redis网络异步优化特性使用指南和版本说明书。
-
 ## 项目介绍
 
-本仓库提供 Redis 网络异步优化相关内容，核心能力是 KRAIO（Kunpeng Redis Asynchronous I/O）方案及其配套补丁。
+Kunpeng BoostKit Redis 是基于上游 Redis 的 patch overlay,在固定上游版本基线上叠加
+BoostKit 团队维护的 ARM/Kunpeng 平台优化 patch。
 
-通过将 Redis 网络 I/O 处理异步化、批量化，可减少系统调用与上下文切换，提升吞吐能力。当前仓库主要覆盖 Redis 6.0.20 和 Redis 7.0.15 两个版本的适配补丁与配套文档。
+**核心模型**:version-centric + 显式 `patches/series`(对齐 SUSE / Debian Quilt /
+Yocto OpenEmbedded / ungoogled-chromium 等业界主流方案,见
+[docs/governance.md §2](./docs/governance.md#2-业界出处))。
 
 ## 目录结构
 
 ```text
-.
-├── README.md
-├── LICENSE.txt
-├── versions/
-│   ├── redis-6.0.20/
-│   │   ├── version.yaml          # 元数据:版本字段 + patches[]
-│   │   └── patches/
-│   │       └── 0001-hw-kunpeng-adapt-iouring-on-6.0.15-6.0.20.patch
-│   └── redis-7.0.15/
-│       ├── version.yaml
-│       └── patches/
-│           ├── 0001-hw-kunpeng-adapt-iouring.patch
-│           ├── 0002-perf-kunpeng-adapt-dtoe.patch
-│           ├── 0003-perf-jemalloc-arm64-pointer-tag-and-gc.patch
-│           └── 0004-perf-rdb-fallback-aof.patch
-├── tools/                        # 4 个工具:verify.sh / sync-manifest.py / whitelist-audit.py / build-perf.sh
-├── PATCHES.yaml                  # 自动生成(机器读,跨版本聚合)
-├── WHITELIST.yaml                # 自动生成(白名单视图)
-├── .github/workflows/ci.yml      # ci.yml:5 阶段门禁
-├── .github/workflows/build-perf.yml  # build-perf.yml:改 patch 自动触发
-└── docs/
-    ├── DEVELOPER-GUIDE.md        # 5 分钟上手(开发者必读)
-    ├── GOVERNANCE.md             # 治理总纲(设计原理)
-    ├── patch-lifecycle.md        # 元数据 + 5 状态机
-    ├── ci-github-actions.md      # CI 配置 + build-perf
-    ├── PATCHES-STATUS.md         # 自动生成(人读仪表盘)
-    ├── LICENSE
-    ├── zh/                       # 上游产品文档(未动)
-    └── en/                       # 上游产品文档(未动)
+boostkit-patches-governance-demo/
+├── README.md / README_en.md            # 本文件
+├── LICENSE.txt                          # 上游 license 全文
+├── .github/
+│   ├── PULL_REQUEST_TEMPLATE.md
+│   └── workflows/
+│       ├── ci.yml                       # 3 步:verify + patch 头 lint + series lint
+│       └── build-perf.yml               # matrix: clean clone + make + memtier
+├── tools/
+│   └── verify.sh                        # 仓根禁放 + upstream.yaml + clean apply series
+├── docs/
+│   ├── governance.md                    # ★ 设计原理 + 业界出处
+│   ├── version-yaml-spec.md             # ★ 字段权威定义
+│   └── (产品指南 zh/en 保留)
+└── versions/
+    └── <upstream-id>/                   # 例如 redis-7.0.15
+        ├── upstream.yaml                # 上游基线
+        └── patches/
+            ├── series                   # ★ 唯一权威顺序
+            └── *.patch                  # RFC822 邮件式头 + diff
 ```
 
-## 特性介绍
+## 快速开始
 
-### Redis 6.0.20 网络异步优化
+### 1. 上游基线 + patch 顺序一目了然
 
-- 特性指南：`docs/zh/redis_network_async_optimization_feature_guide.md`
-- 适配补丁：`versions/redis-6.0.20/patches/0001-hw-kunpeng-adapt-iouring-on-6.0.15-6.0.20.patch`
-- 元数据：`versions/redis-6.0.20/version.yaml`
+`versions/redis-7.0.15/upstream.yaml`:
 
-### Redis 7.0.15 网络异步优化
+```yaml
+upstream:
+  repo: https://github.com/redis/redis
+  version: 7.0.15
+  commit: f35f36a265403c07b119830aa4bb3b7d71653ec9
+```
 
-- 特性指南：`docs/zh/redis_network_async_optimization_feature_guide.md`
-- 适配补丁：`versions/redis-7.0.15/patches/0001-hw-kunpeng-adapt-iouring.patch`
-- 附加补丁：`versions/redis-7.0.15/patches/0002-perf-kunpeng-adapt-dtoe.patch`
-- 元数据：`versions/redis-7.0.15/version.yaml`
+`versions/redis-7.0.15/patches/series`(自上而下应用):
 
-### Redis sockmap优化
+```text
+0001-hw-kunpeng-adapt-iouring.patch
+0002-perf-kunpeng-adapt-dtoe.patch
+0003-perf-jemalloc-arm64-pointer-tag-and-gc.patch
+0004-perf-rdb-fallback-aof.patch
+```
 
-- 特性指南：`docs/zh/redis_sockmap_optimization_feature_guide.md`
-- 版本说明：`docs/zh/redis_sockmap_optimization_release_notes.md`
-
-## 版本说明
-
-版本说明包含软件版本配套、特性变更与问题说明，详见：
-
-- 中文：`docs/zh/redis_network_async_optimization_release_notes.md`
-
-## 快速入门
-
-以下为 Redis 7.0.15 的示例：
+### 2. 本地验证
 
 ```bash
-# 1) 准备 kraio 并安装库文件
-cd kraio
-make -j4
-cp ./libkraio.so /usr/lib64
-cp ./include/kraio.h /usr/include
+# 1. 仓根干净 + upstream.yaml schema + clean clone + 按 series apply
+bash tools/verify.sh
 
-# 2) 合入补丁并编译 Redis
-cd /path/to/redis-7.0.15
-cp /path/to/Redis/versions/redis-7.0.15/patches/0001-hw-kunpeng-adapt-iouring.patch .
-patch -p1 < 0001-hw-kunpeng-adapt-iouring.patch
-make distclean
-make -j
+# 2. patch 邮件式头 schema(对齐 Yocto Upstream-Status)
+python3 .github/lint_patch_headers.py versions/*/patches/
+
+# 3. series 一致性(无孤儿 + 无重复)
+python3 .github/lint_series.py versions/*/patches/
 ```
 
-完整环境准备、配置与验证步骤详见：
+### 3. 在 Kunpeng 上构建
 
-- 中文：`docs/zh/redis_network_async_optimization_feature_guide.md`
+```bash
+# 按 governance.md §3.2 "本地复跑" 章节的步骤
+# 1) clean clone + apply series
+git clone --depth=1 https://github.com/redis/redis
+cd redis
+git fetch origin f35f36a265403c07b119830aa4bb3b7d71653ec9
+git checkout f35f36a265403c07b119830aa4bb3b7d71653ec9
+while read p; do
+  [ -z "$p" ] && continue
+  [[ "$p" == \#* ]] && continue
+  git apply "../versions/redis-7.0.15/patches/$p"
+done < ../versions/redis-7.0.15/patches/series
 
-## 学习文档
+# 2) build
+make distclean && make -j$(nproc) -DHAVE_KRAIO
+```
 
-| 文档 | 说明 |
-|--|--|
-| `docs/zh/redis_network_async_optimization_feature_guide.md` | 中文特性说明、环境部署与验证流程 |
-| `docs/zh/redis_network_async_optimization_release_notes.md` | 中文版本配套与变更说明 |
-| `docs/zh/redis_sockmap_optimization_feature_guide.md` | 中文 Sockmap 优化特性说明 |
-| `docs/zh/redis_sockmap_optimization_release_notes.md` | 中文 Sockmap 优化版本说明 |
+## 兼容性
 
-## 兼容性信息
+| 维度 | 支持范围 |
+|---|---|
+| OS | openEuler 22.03 LTS SP4 / 24.03 LTS |
+| Redis | 6.0.20 / 7.0.15(见 `versions/`) |
+| 架构 | aarch64(Kunpeng) |
+| 内核 | 内核自带 KRAIO SDK RPM 包 |
 
-| 组件 | 版本 |
-|--|--|
-| OS | openEuler 22.03 LTS SP4 |
-| Redis | 6.0.20 / 7.0.15 |
-| 内核（示例） | kernel-5.10.0-275.0.0.178.oe2203sp4.aarch64.rpm |
+## 出处与规范
 
-## 工具限制与注意事项
+- **设计原理 + 业界对齐**:[docs/governance.md](./docs/governance.md)
+- **字段权威定义**:[docs/version-yaml-spec.md](./docs/version-yaml-spec.md)
+- **操作步骤(新增/废弃 patch 等)**:[docs/governance.md §4](./docs/governance.md#4-常见操作)
 
-- 本仓库仅提供 Redis 网络异步优化相关补丁和文档，不直接提供完整 Redis 源码。
-- 使用时需确保系统环境、内核版本与文档中的要求匹配。
-- 实际性能结果与硬件规格、网络拓扑、压测方法强相关，请按文档建议完成环境对齐。
+业界出处:
+- Quilt / Debian `debian/patches/series` — 自上而下顺序清单
+- SUSE `kernel-source/series.conf` — 显式清单 + `Git-commit` 元数据校验
+- Yocto/OpenEmbedded `Upstream-Status` 字段 — 8 状态语义对齐
+- ungoogled-chromium `patches/series` — version pin ↔ patches 分离
+- openEuler `apply-patches` — series + guards(未来扩展)
 
-## 贡献声明
+## 贡献
 
-欢迎通过 Issue/PR 反馈问题与改进建议。提交代码前，请确保：
+只接受 PR,不接受直推 master。流程:
 
-- 变更与 Redis 网络异步优化主题相关；
-- 文档与补丁版本信息保持一致；
-- 关键变更附带可复现的验证说明。
+1. 新增 patch → 修改 `patches/series` 一行 + 写邮件式头
+2. 跑本地 3 工具全绿
+3. 开 PR,触发 `ci.yml` 3 步 + `build-perf.yml` matrix
+4. 维护者 review → merge
 
-## 治理文档简介
+## 许可证
 
-本仓采用 **Patch Overlay** 治理模式：开发者只编辑 `versions/<v>/version.yaml` + `versions/<v>/patches/<name>.patch` 两个手写入口，其他产物（`PATCHES.yaml` / `WHITELIST.yaml` / `docs/PATCHES-STATUS.md`）由 CI 自动派生。
+- 本仓 patch overlay:Apache 2.0(见 [LICENSE.txt](./LICENSE.txt))
+- 上游 Redis:BSD-3-Clause(各 patch 头部保留原始 license)
+- 产品文档:CC-BY 4.0(见 [docs/LICENSE](./docs/LICENSE))
 
-| 文档 | 用途 | 何时读 |
-|---|---|---|
-| [docs/DEVELOPER-GUIDE.md](docs/DEVELOPER-GUIDE.md) | 5 分钟上手 + PR 全流程 + 工具调用 | 第一次提 PR 前**必读** |
-| [docs/GOVERNANCE.md](docs/GOVERNANCE.md) | 治理总纲：5 状态机 / 4 工具 / 5 阶段 CI / 设计取舍 | 想理解「为什么这样设计」时 |
-| [docs/patch-lifecycle.md](docs/patch-lifecycle.md) | 元数据格式 + 5 状态机 + 合法转换表 + 4 常见场景 | 改字段 / 改状态 / 新增 patch 时 |
-| [docs/ci-github-actions.md](docs/ci-github-actions.md) | ci.yml 5 阶段流程图 + build-perf.yml 触发逻辑 + 失败排查 | CI 出问题或要排查构建性能时 |
+## 变更通知
 
-> 完整规范见仓外文档 `D:\AI\github_cli\BoostKit-Patch-Governance-Spec-v2.md`（总—分架构总纲）。
-
-## 免责声明
-
-- 本仓库内容用于开源技术交流与优化实践参考。
-- 使用者需自行评估在其生产环境中的适配性与风险。
-- 上游 Redis 社区版本变化可能影响本仓库补丁的可用性。
-
-## License
-
-- 仓库代码 License：见 `LICENSE.txt`
-- 仓库文档 License：见 `docs/LICENSE`
-- 本项目的文档适用CC-BY 4.0许可证，具体请参见LICENSE文件。
+- **2026-07-20** v2.0 重构:精简到 `version-centric + patches/series` 模型,
+  删除 `sync-manifest.py` / `whitelist-audit.py` / `build-perf.sh` / 派生 manifest 文件;
+  patch 元数据迁到邮件式头;对齐 SUSE / Debian Quilt / Yocto 等业界方案。
