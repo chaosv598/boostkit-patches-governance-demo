@@ -28,7 +28,7 @@ fi
 [ -f Dockerfile ] && { echo "  ✗ 仓根有 Dockerfile"; root_bad=$((root_bad+1)); }
 [ -f build.sh ] && { echo "  ✗ 仓根有 build.sh"; root_bad=$((root_bad+1)); }
 [ -f Makefile ] && { echo "  ✗ 仓根有 Makefile"; root_bad=$((root_bad+1)); }
-for d in src/ storage/ sql/ include/ SPECS/ RPMS/ SOURCES/ BUILD/ SRPMS/ vendor/; do
+for d in src/ storage/ sql/ include/ SPECS/ RPMS/ SOURCES/ BUILD/ SRPMS/ vendor/ out/; do
     [ -d "$d" ] && { echo "  ✗ 仓根有目录: $d"; root_bad=$((root_bad+1)); }
 done
 [ "$root_bad" = "0" ] && echo "  ✓ 仓根干净"
