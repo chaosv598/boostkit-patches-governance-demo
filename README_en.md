@@ -11,8 +11,10 @@ pins a fixed upstream version and layers BoostKit-maintained ARM/Kunpeng optimiz
 patches on top.
 
 **Core model**: version-centric + explicit `patches/series`. Combined from 5 industry-proven
-schemes — **Yocto/OpenEmbedded** recipe fields + `Upstream-Status`, **DEP-3** patch header
-schema, **Buildroot** `apply-patches.sh`, **OpenWrt** `patches/series`, **Quilt/Debian** series.
+schemes + 2 repo extensions — **Yocto/OpenEmbedded** recipe fields + `Upstream-Status`,
+**DEP-3** patch header schema, **Buildroot** `apply-patches.sh`, **OpenWrt** `patches/series`,
+**Quilt/Debian** series; plus `series.<profile>` profile files (Buildroot variant pattern)
+and `tools/gen_inventory.py` (Buildroot `pkg-stats` / OpenWrt `metadata.pl` style).
 See [docs/governance.md §2](./docs/governance.md#2-industry-references).
 
 ## Repository Layout
@@ -24,22 +26,25 @@ boostkit-patches-governance-demo/
 ├── .github/
 │   ├── PULL_REQUEST_TEMPLATE.md
 │   ├── lint_patch_headers.py            # DEP-3 6 required fields validator
-│   ├── lint_series.py                   # series consistency validator
+│   ├── lint_series.py                   # series + series.* profile consistency validator
 │   └── workflows/
-│       ├── ci.yml                       # 3 steps: verify + patch header lint + series lint
+│       ├── ci.yml                       # 4 steps: verify + patch header lint + series lint + inventory check
 │       └── build-perf.yml               # skeleton workflow (matrix: clean apply + echo steps)
 ├── tools/
-│   ├── verify.sh                        # root hygiene + upstream.yaml schema (delegates apply)
-│   └── apply_patch.sh                   # ★ Buildroot-style series applier (single source)
+│   ├── verify.sh                        # root hygiene + upstream.yaml schema (delegates apply) + inventory refresh
+│   ├── apply_patch.sh                   # ★ Buildroot-style series applier (single source)
+│   └── gen_inventory.py                 # inventory.json generator (Buildroot/OpenWrt style)
 ├── docs/
-│   ├── governance.md                    # ★ Design rationale + 5 industry references
+│   ├── governance.md                    # ★ Design rationale + 5 industry references + 2 repo extensions
 │   ├── version-yaml-spec.md             # ★ Authoritative field definitions
 │   └── (product guides zh/en retained)
 └── versions/
     └── <upstream-id>/                   # e.g. redis-7.0.15
         ├── upstream.yaml                # Yocto recipe fields + upstream pin + governance
         └── patches/
-            ├── series                   # ★ Single source of truth for ordering
+            ├── series                   # ★ Single source of truth (default profile)
+            ├── series.<profile>         # profile series files (e.g. series.minimal / series.security)
+            ├── inventory.json           # derived (gitignored)
             └── *.patch                  # DEP-3 mail-style header (6 required) + diff
 ```
 
@@ -83,16 +88,46 @@ meta:
 ### 2. Local validation
 
 ```bash
-# 1. Root hygiene + upstream.yaml schema + clean clone + apply series
+# 1. Root hygiene + upstream.yaml schema + clean clone + apply series + inventory refresh
 #    (delegates to tools/apply_patch.sh internally)
 bash tools/verify.sh
 
 # 2. DEP-3 patch header schema (6 required: Description/Origin/Upstream-Status/Applies-To/Maintainer/Last-Update)
 python3 .github/lint_patch_headers.py versions/*/patches/
 
-# 3. Series consistency (no orphans, no duplicates)
+# 3. Series consistency (no orphans, no duplicates; profile files series.* auto-detected)
 python3 .github/lint_series.py versions/*/patches/
+
+# 4. inventory.json matches patch headers + series (ignores generated_at timestamp)
+python3 tools/gen_inventory.py --check versions/*/
 ```
+
+### 2.6 Profile series files (subsets on the same upstream)
+
+Apply only a subset of patches by using `series.<profile>` (Buildroot variant pattern):
+
+```bash
+# Create profile series file (same plain series format)
+cat > versions/redis-7.0.15/patches/series.ci <<'EOF'
+# CI smoke profile: only 0001 + 0004, skip 0002 (Kunpeng HW) / 0003 (jemalloc)
+0001-hw-kunpeng-adapt-iouring.patch
+0004-perf-rdb-fallback-aof.patch
+EOF
+
+# profile reuses apply_patch.sh directly (accepts any series file)
+bash tools/apply_patch.sh \
+    https://github.com/redis/redis \
+    f35f36a265403c07b119830aa4bb3b7d71653ec9 \
+    versions/redis-7.0.15/patches/series.ci \
+    versions/redis-7.0.15/patches \
+    /tmp/build-ci
+
+# inventory.json auto-reflects new profile (derived, gitignored)
+python3 -c "import json; d=json.load(open('versions/redis-7.0.15/patches/inventory.json')); \
+    [print(f\"{p['file']:50s} profiles={p['in_profiles']}\") for p in d['patches']]"
+```
+
+See [docs/version-yaml-spec.md §3.3](./docs/version-yaml-spec.md#33-profile-series-filesseriesprofile--repo-extension).
 
 ### 2.5 Standalone series apply (Buildroot-style)
 
@@ -136,13 +171,15 @@ make distclean && make -j$(nproc) -DHAVE_KRAIO
 - **Field definitions**: [docs/version-yaml-spec.md](./docs/version-yaml-spec.md)
 - **Operations (add/retire patch)**: [docs/governance.md §4](./docs/governance.md#4-common-operations)
 
-Industry references (5-way alignment):
+Industry references (5-way alignment + 2 repo extensions):
 - **Yocto/OpenEmbedded** — recipe fields (SUMMARY/LICENSE/HOMEPAGE/LIC_FILES_CHKSUM/SECTION) +
   `Upstream-Status` 8-state semantics
 - **DEP-3** (Debian) — patch header schema with 6 required fields
 - **Buildroot** `apply-patches.sh` — series applier single source
 - **OpenWrt** `patches/series` + `patch-kernel.sh` — per-package series format
 - **Quilt/Debian** `debian/patches/series` — top-to-bottom order list
+- **Repo extension** — `series.<profile>` profile files (Buildroot variant pattern)
+- **Repo extension** — `tools/gen_inventory.py` derived inventory.json (Buildroot `pkg-stats` / OpenWrt `metadata.pl`)
 
 ## Contributing
 
@@ -161,6 +198,10 @@ PR-only workflow. No direct pushes to master.
 
 ## Change Log
 
+- **2026-07-20** v4.0: add `tools/gen_inventory.py` (Buildroot/OpenWrt-style derived
+  inventory.json) and `series.<profile>` profile files. inventory.json is gitignored
+  and regenerated by `tools/verify.sh`. CI gains step 4 (`gen_inventory.py --check`).
+  `lint_series.py` now auto-discovers `series.<profile>` files.
 - **2026-07-20** v3.0: combine Yocto recipe fields + DEP-3 patch header + Buildroot
   `apply-patches.sh`. New: `tools/apply_patch.sh` (single source series applier),
   `upstream.yaml` Yocto-style fields (SUMMARY/LICENSE/HOMEPAGE/LIC_FILES_CHKSUM/SECTION),

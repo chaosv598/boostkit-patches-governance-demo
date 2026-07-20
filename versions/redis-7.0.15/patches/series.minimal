@@ -1,0 +1,19 @@
+# series.minimal —— minimal build profile
+#
+# 跳过 0002-perf-kunpeng-adapt-dtoe.patch (Kunpeng-specific HW feature,无 upstream 等价物)
+# 跳过 0003-perf-jemalloc-arm64-pointer-tag-and-gc.patch (需要单独 enable jemalloc 子模块)
+# 只保留 0001 + 0004 — 最小 Kunpeng 优化集
+#
+# 用法:
+#   bash tools/apply_patch.sh <repo> <sha> \
+#       versions/redis-7.0.15/patches/series.minimal \
+#       versions/redis-7.0.15/patches \
+#       /tmp/build
+#
+# 业界参照:
+#   - Buildroot: package/<name>/<name>-<variant>.patch (variant 系列)
+#   - OpenWrt:   PATCHFILES in Makefile (按 CONFIG_* 条件)
+#   - 本仓扩展: 多个 series.* 文件作为 profile
+
+0001-hw-kunpeng-adapt-iouring.patch
+0004-perf-rdb-fallback-aof.patch

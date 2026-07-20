@@ -19,15 +19,20 @@
 versions/<upstream-id>/
 ├── upstream.yaml            # recipe 元数据 (Yocto) + 上游 pin + 治理归属
 └── patches/
-    ├── series               # patch 应用顺序(自上而下)
+    ├── series               # patch 应用顺序(自上而下,默认 profile)
+    ├── series.<profile>     # profile 系列文件(可选,见 §3.3)
     └── *.patch              # patch 文件(DEP-3 邮件式头 + diff)
 ```
+
+派生(不入仓):
+- `inventory.json` — `tools/gen_inventory.py` 从 patch 头 + series 派生(见 §6)
 
 `<upstream-id>` 命名约定:`<project>-<version>`,例如 `redis-7.0.15`。
 
 **配套工具**(仓根 `tools/`):
-- `tools/apply_patch.sh` — Buildroot 风格 series 应用器(单点实现)
-- `tools/verify.sh` — 一键验证(仓根禁放 + upstream.yaml schema + 委托 apply_patch.sh)
+- `tools/apply_patch.sh` — Buildroot 风格 series 应用器(单点实现,接受任意 series 文件)
+- `tools/gen_inventory.py` — 派生 `inventory.json`(Buildroot/OpenWrt 风格)
+- `tools/verify.sh` — 一键验证(仓根禁放 + upstream.yaml schema + 委托 apply_patch.sh + inventory 派生刷新)
 
 ---
 
@@ -134,7 +139,53 @@ meta:
 - **注释**:以 `#` 开头的行视为注释,跳过
 - **空行**:跳过
 
-### 3.3 业界对齐
+### 3.3 Profile 系列文件(`series.<profile>`)— 本仓扩展
+
+为支持"同一 upstream + 多个 patch 集合"场景(例:full / minimal / security / ci),
+主 `series` 文件之外允许创建 `series.<profile>` 作为**profile 系列文件**:
+
+```text
+versions/redis-7.0.15/patches/
+├── series              # 默认 profile (name="default")
+├── series.minimal      # profile "minimal":跳过 Kunpeng HW / jemalloc 子模块
+└── series.security     # profile "security":只保留 AOF fallback
+```
+
+**调用方式**:`tools/apply_patch.sh` 接受任意 series 文件路径,所以 profile 直接复用:
+
+```bash
+bash tools/apply_patch.sh \
+    https://github.com/redis/redis \
+    f35f36a265403c07b119830aa4bb3b7d71653ec9 \
+    versions/redis-7.0.15/patches/series.security \
+    versions/redis-7.0.15/patches \
+    /tmp/build-security
+```
+
+**lint 规则**(与主 series 略有差别):
+- 所有 series 文件都查 "无重复 entry" + "entry 引用必须存在"
+- **只有主 series 强制孤儿检查**(profile 本就是子集,允许不含某些 patch)
+- profile 文件允许为空(0 条)或只含 1 条
+
+**业界对照**:
+- **Buildroot** — `package/<name>/<name>-<variant>.patch` (variant 系列)
+- **OpenWrt** — `PATCHFILES` 配合 `CONFIG_*` 条件(参见 OpenWrt Makefile)
+- **本仓扩展** — `series` + `series.<profile>` 二选一(参见 §3.4)
+
+### 3.4 系列文件 vs per-feature 多系列(本仓选择)
+
+| 方案 | 适用场景 | 代表项目 |
+|---|---|---|
+| **1 个 series = 1 个 upstream/version**(本仓选择) | 1 个上游版本的所有 patch 全部入仓,profile 文件做子集 | ungoogled-chromium / Buildroot / OpenWrt |
+| 1 个 series = 1 个 feature 模块 | 不同 feature 装/卸独立 | Linux kernel(若干子目录)|
+| 1 个 series = 1 个 profile | 同一上游多 profile | Quilt 风格的 Debian 包 |
+
+**为什么选方案 1**:
+- 单 source 真相:每个 upstream/version 只有 1 个主 series,patches/ 下所有 patch 都必须挂在它上面
+- profile 子集通过 `series.<profile>` 表达,避免 per-feature 引入 DAG
+- 与 Buildroot / OpenWrt / ungoogled-chromium 业界共识一致
+
+### 3.5 业界对齐
 
 - **Buildroot** — `package/<name>/patches/series` 同款格式
 - **OpenWrt** — `package/<name>/patches/series` 同款格式
@@ -275,7 +326,82 @@ bash tools/apply_patch.sh \
 
 ---
 
-## 6. 与业界对齐速查
+## 6. `tools/gen_inventory.py`(Buildroot/OpenWrt 风格派生)
+
+为解决"系列里每一 patch 是什么状态 / 属于哪个 profile"这类查询需求,本仓引入
+**派生物 `versions/<v>/patches/inventory.json`**,由 `tools/gen_inventory.py`
+从 patch 邮件式头 + series 文件**全自动派生**。
+
+### 6.1 设计原则
+
+- **派生 = 非源**:inventory.json **不入仓**(`.gitignore` 已在 v4.0 加),
+  单一真相仍是 patch 头 + series 文件
+- **用途**:dashboard / 报告 / 一键查"这个版本有哪些 patch,什么状态,属于哪些 profile"
+- **业界出处**:
+  - Buildroot `support/scripts/pkg-stats`(从 package 元数据派生统计)
+  - OpenWrt `scripts/metadata.pl`(扫 Makefile 提取 package 信息)
+  - Debian `dpkg-scanpackages`(从 `.dsc` 派生 `Packages` 文件)
+
+### 6.2 用法
+
+```bash
+# 写 inventory.json(每次 verify.sh 自动调)
+python3 tools/gen_inventory.py versions/*/
+
+# CI:仅检查是否新鲜,与业务字段一致(忽略 generated_at 时间戳差异)
+python3 tools/gen_inventory.py --check versions/*/
+```
+
+### 6.3 输出 schema(精简版)
+
+```json
+{
+  "version_id": "redis-7.0.15",
+  "upstream": {"repo": "...", "version": "...", "commit": "..."},
+  "generated_at": "2026-07-20T...",
+  "generator": "tools/gen_inventory.py",
+  "patches": [
+    {
+      "file": "0001-hw-kunpeng-adapt-iouring.patch",
+      "upstream_status": "Submitted",
+      "maintainer": "twwang <twwang@boostkit>",
+      "last_update": "2026-07-20",
+      "applies_to": "redis 7.0.15",
+      "subject": "...",
+      "description_first_line": "...",
+      "in_series_default": true,
+      "in_profiles": ["default", "minimal"]
+    }
+  ],
+  "profiles": {
+    "default":  {"file": "patches/series",          "patch_count": 4},
+    "minimal":  {"file": "patches/series.minimal",  "patch_count": 2},
+    "security": {"file": "patches/series.security", "patch_count": 1}
+  },
+  "stats": {
+    "total_patches": 4,
+    "by_upstream_status": {"Submitted": 3, "Inappropriate": 1},
+    "orphans": [],
+    "missing_from_series": []
+  }
+}
+```
+
+### 6.4 字段语义
+
+| 字段 | 来源 | 用途 |
+|---|---|---|
+| `patches[].file` | `patches/*.patch` glob | patch 文件名(glob 排序) |
+| `patches[].upstream_status` | patch 头 `Upstream-Status:` | 状态聚合 |
+| `patches[].in_series_default` | 主 series 是否引用 | 孤儿检查 |
+| `patches[].in_profiles` | 所有 series / series.* 引用 | profile 矩阵 |
+| `profiles.<name>.patch_count` | series / series.* 行数 | profile 概要 |
+| `stats.by_upstream_status` | 聚合 | dashboard 卡片 |
+| `stats.orphans` | 在 `patches/` 但不在主 `series` | 主 series 完整性 |
+
+---
+
+## 7. 与业界对齐速查
 
 | 概念 | 业界出处 | URL |
 |---|---|---|
@@ -286,17 +412,21 @@ bash tools/apply_patch.sh \
 | `patches/series` 自上而下顺序 | Debian Quilt / ungoogled-chromium | https://salsa.debian.org/kernel-team/linux/-/tree/master/debian/patches |
 | `series.conf` + SHA-256 校验和 | SUSE kernel-source | https://github.com/openSUSE/kernel-source/blob/master/scripts/apply-patches |
 | `apply-patches.sh` 单点实现 | **Buildroot** + **OpenWrt** | https://github.com/buildroot/buildroot/blob/master/support/scripts/apply-patches.sh |
+| `series.<profile>` 子集系列文件 | Buildroot variant + OpenWrt `PATCHFILES` | (本仓扩展) |
+| `inventory.json` 派生物(单跑 + check) | Buildroot `pkg-stats` + OpenWrt `metadata.pl` | (本仓) |
 
 ---
 
-## 7. 版本演进
+## 8. 版本演进
 
 | 字段/工具 | 添加版本 | 替代方案 |
 |---|---|---|
+| `tools/gen_inventory.py` + `inventory.json` 派生 | **v4.0** | (新增) |
+| `series.<profile>` profile 系列文件 | **v4.0** | (新增,本仓扩展) |
 | `upstream.yaml` Yocto 段(SUMMARY/LICENSE/HOMEPAGE) | v3.0 | 旧 `version.yaml` 无 recipe 段 |
 | patch 头 DEP-3 6 必填 | v3.0 | 旧 4 必填(From/Subject/Upstream-Status/Signed-off-by) |
 | `tools/apply_patch.sh` | v3.0 | 旧 verify.sh 内联 `git apply` loop |
 | `patches/series` | v2.0 | 旧 patches[] 数组顺序 |
 | `Upstream-Status` 8 状态 | v2.0 | 旧 `status` 5 状态 |
 
-v3 与 v2 兼容(增量加严),可平滑迁移。v3 不可直接回退到 v1。
+v4 与 v3 兼容(增量加严),可平滑迁移。v3 不可直接回退到 v1。

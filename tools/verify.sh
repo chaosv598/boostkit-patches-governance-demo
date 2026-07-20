@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
 # verify —— patch overlay 仓一键验证
 #
-# 检查 3 件事(其他职责移到 .github/ lint 脚本):
+# 检查 4 件事(其他职责移到 .github/ lint 脚本):
 #   1. 仓根禁放检查(防误提交 upstream 源码/Dockerfile/Makefile 等)
 #   2. versions/<v>/upstream.yaml schema(Yocto recipe 字段 + 上游 pin 校验)
 #   3. 干净 upstream apply:委托给 tools/apply_patch.sh
 #      (Buildroot/OpenWrt 风格的 series 应用器,单点实现)
+#   4. 派生 inventory.json 刷新(委托 tools/gen_inventory.py)
+#      (gitignored,确保与 patch 头 + series 同步)
 #
 # 用法: bash tools/verify.sh
 # 环境变量:
@@ -162,6 +164,15 @@ PYEOF
     rm -rf "$WORK"
     vcount=$((vcount+1))
 done
+
+# === 4. 派生 inventory.json 刷新 ===
+echo "--- inventory.json 派生刷新 ---"
+if python3 "$ROOT/tools/gen_inventory.py" versions/*/ 2>&1 | sed 's/^/  /'; then
+    :
+else
+    echo "  ✗ gen_inventory.py 失败"
+    errs=$((errs+1))
+fi
 
 # === 汇总 ===
 echo "--- 汇总 ---"

@@ -45,3 +45,6 @@ versions/*/tests/.tmp/
 
 # 工具运行产物(sync-manifest 等老脚本的输出;verify.sh 禁放)
 /out/
+
+# inventory 派生产物(tools/gen_inventory.py 生成,不入仓,单一真相仍是 patch 头)
+versions/*/patches/inventory.json

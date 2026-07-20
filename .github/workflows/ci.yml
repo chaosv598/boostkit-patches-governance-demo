@@ -1,9 +1,10 @@
 # Patch overlay CI —— v2.0 模型
 #
 # 流程 (按 docs/version-yaml-spec.md + docs/governance.md):
-#   1. tools/verify.sh        —— 仓根禁放 + upstream.yaml schema + clean clone + 按 series apply
+#   1. tools/verify.sh        —— 仓根禁放 + upstream.yaml schema + clean clone + 按 series apply + inventory 派生刷新
 #   2. .github/lint_patch_headers.py —— patch 邮件式头 schema 校验
-#   3. .github/lint_series.py —— series 一致性(无孤儿 + 无重复)
+#   3. .github/lint_series.py —— series 一致性(无孤儿 + 无重复,profile 文件允许子集)
+#   4. tools/gen_inventory.py --check —— 派生 inventory.json 与 patch 头 + series 一致
 #
 # 失败策略:
 #   - ci.yml 任何一项 fail = block merge
@@ -51,3 +52,7 @@ jobs:
       # 3. series 一致性
       - name: Series consistency lint
         run: python3 .github/lint_series.py versions/*/patches/
+
+      # 4. inventory 派生物一致(单跑 check,差异 > 0 即 fail;verify.sh 已经写过一遍)
+      - name: Inventory consistency check
+        run: python3 tools/gen_inventory.py --check versions/*/
