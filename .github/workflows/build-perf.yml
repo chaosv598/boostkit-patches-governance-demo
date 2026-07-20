@@ -7,13 +7,26 @@
 #
 # 输入: versions/<v>/upstream.yaml + patches/series + patches/*.patch
 # 输出: artifacts/<v>/{memtier.log, summary.md}
+#
+# 触发:
+#   - push master: 合并后跑一次,作为正式入库前的 smoke
+#   - workflow_dispatch: 真 Kunpeng runner 手动触发(performance / nightly)
+#   - schedule: 每周一次 nightly(可在 self-hosted runner 上跑)
+#
+# 注意:此 workflow 不在 pull_request 上自动跑。原因:编译依赖
+# BoostKit 内核侧 KRAIO SDK(参见 README "兼容性")— 只有真 Kunpeng 机器
+# 才有该头文件,普通 ubuntu-22.04 GHA runner 必然失败。PR 上由 ci.yml 的
+# verify.sh(clean clone + apply series + lint)把关。
 
 name: build-perf
 
 on:
-  pull_request:
+  push:
     branches: [master]
   workflow_dispatch:
+  schedule:
+    # 每周一 02:00 UTC nightly
+    - cron: "0 2 * * 1"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
