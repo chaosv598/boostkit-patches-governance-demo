@@ -83,12 +83,15 @@ jobs:
 
       - name: Install build deps + memtier from source
         run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential tcl libssl-dev pkg-config
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            build-essential pkg-config \
+            tcl tcl-dev libssl-dev libevent-dev
           cd /tmp
           git clone --depth 1 --branch 2.1.0 --quiet https://github.com/RedisLabs/memtier_benchmark.git
           (cd memtier_benchmark && autoreconf -ivf && ./configure --quiet && make -j$(nproc) && sudo make install)
           which memtier_benchmark
+          memtier_benchmark --version
 
       - name: Cache upstream clone
         id: cache-upstream
