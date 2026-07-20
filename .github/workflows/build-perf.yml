@@ -109,17 +109,22 @@ jobs:
           mkdir -p "$WORK" "$GITHUB_WORKSPACE/artifacts/${VID}"
           cd "$WORK"
 
-          # 1) clone upstream (cache 复用)
+          # 1) clone upstream (cache 复用;浅克隆 + 拉 tag + 按需按 SHA fetch)
+          #    --depth 1 + 默认拉 tag 拿到 refs/tags/<version> 的 tag 对象;
+          #    若目标 commit 不在 default branch 历史里,按 SHA 单 commit 深 fetch 一次
           if [ ! -d "upstream/.git" ]; then
-            git clone --depth 1 --no-tags "$UPSTREAM_REPO" upstream 2>&1 | tail -3
+            git clone --depth 1 "$UPSTREAM_REPO" upstream 2>&1 | tail -3
           fi
 
           # 2) fetch target commit
-          if ! (cd upstream && git cat-file -t "$UPSTREAM_COMMIT" >/dev/null 2>&1); then
-            (cd upstream && git fetch --unshallow origin 2>&1 | tail -1 || true)
+          cd upstream
+          if ! git cat-file -t "$UPSTREAM_COMMIT" >/dev/null 2>&1; then
+            git fetch --depth 1 origin "$UPSTREAM_COMMIT" 2>&1 | tail -1 || \
+              { git fetch --unshallow origin 2>&1 | tail -1; git fetch --tags origin 2>&1 | tail -1; } || true
           fi
-          (cd upstream && git checkout -q "$UPSTREAM_COMMIT")
-          echo "upstream HEAD: $(cd upstream && git rev-parse --short HEAD)"
+          git checkout -q "$UPSTREAM_COMMIT"
+          echo "upstream HEAD: $(git rev-parse --short HEAD)"
+          cd ..
 
           # 3) 按 series apply
           SERIES="$GITHUB_WORKSPACE/versions/${VID}/patches/series"
