@@ -129,22 +129,33 @@ kernel/
 | 3 | `python3 .github/lint_series.py` | series 一致性(无孤儿 + 无重复 + 所有 entry 存在) |
 | 4 | (可选,后续扩展) upstream-test reminder | 不阻塞,仅 Step Summary 提示 |
 
-### 3.2 `build-perf.yml`(push master / workflow_dispatch / nightly 触发)
+### 3.2 `build-perf.yml`(PR / push master / workflow_dispatch 触发,骨架演示)
 
-> **不在 `pull_request` 上自动跑**。原因:编译依赖 BoostKit 内核侧
-> **KRAIO SDK**(`networking.c` 引用 `<kraio.h>`,只有装好 BoostKit 内核
-> RPM 的真 Kunpeng 机器才有该头文件)。普通 `ubuntu-22.04` GHA runner
-> 必然 `fatal error: kraio.h: No such file or directory`。PR 上的"patch
-> 真的 apply + 编译成功"靠 `ci.yml` 的 `verify.sh` 在干净 clone 里跑
-> 完整 `git apply series`(失败会降级为 warning,不是 error,详见 §4)。
+> **本仓 CI 上的 build-perf 是骨架演示 workflow**(demonstration skeleton),
+> 不实际跑编译/bench。原因:编译依赖 BoostKit 内核侧 **KRAIO SDK**
+> (`networking.c` 引用 `<kraio.h>`,只有装好 BoostKit 内核 RPM 的真
+> Kunpeng 机器才有该头文件),普通 `ubuntu-22.04` GHA runner 必然
+> `fatal error: kraio.h: No such file or directory`。
 
 **触发方式**:
-- `push` 到 `master` — 合并后跑一次,作为正式入库前的 smoke
-- `workflow_dispatch` — 真 Kunpeng runner 手动触发(性能验收 / nightly)
-- `schedule` — 每周一 02:00 UTC weekly,可在 self-hosted runner 上跑
+- `pull_request` 到 `master` — 骨架演示走完,Step Summary 列出每个 step 的"实际 / 演示"
+- `push` 到 `master` — 同上(合并后 smoke)
+- `workflow_dispatch` — 真 Kunpeng runner 手动触发完整流程
 
-**矩阵**:`versions/*/upstream.yaml` 动态展开,每个 affected version 跑
-build + memtier,上传 `memtier.log` + `summary.md` 到 artifacts。
+**矩阵生成**:从 `versions/*/upstream.yaml` 动态展开(不写死 redis-7.0.15)。
+
+**骨架里实际跑的**:
+- matrix 检测(读 `versions/*/upstream.yaml`)
+- clean clone upstream + 按 `patches/series` `git apply` — 这是真信号,与 `verify.sh` 二次确认一致
+
+**骨架里只 echo 不真跑的**:
+- apt-get 安装 build deps + memtier 源码编译
+- make patched redis
+- memtier_benchmark
+
+**真 Kunpeng runner 部署**:把每个 `[skeleton]` step 的 `run: echo ...` 替换成
+`run: <实际命令>` 即可(完整命令见下"本地复跑")。整个 workflow 结构(metrics /
+matrix / cache / artifact upload)已就位,直接填血肉。
 
 **本地复跑**(给开发者,真 Kunpeng 机器上):
 
