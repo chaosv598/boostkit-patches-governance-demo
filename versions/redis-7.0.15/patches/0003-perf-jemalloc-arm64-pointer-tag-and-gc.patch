@@ -4,6 +4,8 @@ Date: Thu, 21 May 2026 09:15:06 +0800
 Subject: [PATCH] redis-7.0.15 adapt jemalloc-5.2.1 arm64 pointer-tag and gc
  strategy optimize
 
+Upstream-Status: Submitted
+Upstream-PR: https://github.com/redis/jemalloc/pull/9876
 Signed-off-by: yinbin <yinbin8@h-partners.com>
 ---
  deps/Makefile                                 | 11 ++++

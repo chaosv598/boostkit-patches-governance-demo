@@ -1,138 +1,211 @@
-# Patch overlay build + perf benchmark
+# build-perf —— clean upstream apply + 编译 + memtier_benchmark 性能基准
 #
-# 触发: PR 修改了 versions/<v>/patches/ 或 version.yaml
-# 不触发: 纯 docs/ 修改(节省 ~2min CI)
+# 本 workflow 是骨架演示版本(demonstration skeleton),**不在 CI 上实际跑编译**。
+# 原因:编译依赖 BoostKit 内核侧 KRAIO SDK(<kraio.h>),只有装好 BoostKit 内核
+# RPM 的真 Kunpeng 机器才有该头文件;普通 ubuntu-22.04 GHA runner 必然
+# 'fatal error: kraio.h: No such file or directory'。
 #
-# 与 verify workflow 的关系:
-#   - ci.yml(verify): dry-run,只 apply 不编不跑,~30s
-#   - build-perf.yml(本文件): 真的编 + 跑 memtier_benchmark,~2-3min
+# 工作流结构(完整保留供真 Kunpeng runner 使用):
+#   1. detect changed versions   → 从 versions/*/upstream.yaml 构造 matrix
+#   2. (would-be) Install deps   → apt-get build-essential tcl libssl-dev libevent-dev + memtier 源码
+#   3. (would-be) Clean clone    → git clone upstream + checkout pinned commit
+#   4. (would-be) Apply series   → 按 patches/series 顺序 git apply
+#   5. (would-be) make patched redis → make distclean && make -j
+#   6. (would-be) memtier_benchmark → redis-server + benchmark + parse summary
 #
-# 失败策略: build 失败 = fail(说明 patch 让 upstream 编不过)
-#           bench 数据异常 = warn 不 fail(report 给 reviewer)
+# 本仓 CI 上的把关完全交给 ci.yml 的 3 步:
+#   1. bash tools/verify.sh             ← clean clone + 按 series apply (失败降级 warning)
+#   2. python3 .github/lint_patch_headers.py  ← patch 邮件式头 schema
+#   3. python3 .github/lint_series.py   ← series 一致性
 #
-# 注意: paths-filter 输出 key 不能含点号(.是 GHA 表达式属性访问符)
-#      所以 filter key 用 redis_7_0_15 / redis_6_0_20
+# 真要跑(在 Kunpeng self-hosted runner 上):
+#   1. 拷本文件 skeleton 改成 'run: <实际命令>' 即可
+#   2. 或在 docs/governance.md §3.2 "本地复跑" 段按步骤手动跑
+#
+# 输入: versions/<v>/upstream.yaml + patches/series + patches/*.patch
+# 输出(本骨架): Job Summary 展示 matrix 检测结果 + 每个 version 的步骤意图
 
 name: build-perf
 
 on:
   pull_request:
     branches: [master]
+  push:
+    branches: [master]
   workflow_dispatch:
 
 concurrency:
-  group: build-perf-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
+  # === 第 1 步:检测哪些 versions 改动 → 构造 matrix ===
+  # 这是 workflow 的"动态生成 matrix"骨架,读 versions/*/upstream.yaml
+  # (而不是写死 redis-7.0.15 / redis-6.0.20),便于将来加新版本。
   changes:
     name: detect changed versions
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
-      redis_7_0_15: ${{ steps.filter.outputs.redis_7_0_15 }}
-      redis_6_0_20: ${{ steps.filter.outputs.redis_6_0_20 }}
-      versions: ${{ steps.build-versions.outputs.versions }}
-    steps:
-      - uses: actions/checkout@v4
-      - id: filter
-        uses: dorny/paths-filter@v3
-        with:
-          filters: |
-            redis_7_0_15:
-              - 'versions/redis-7.0.15/**'
-            redis_6_0_20:
-              - 'versions/redis-6.0.20/**'
-      - id: build-versions
-        name: build matrix list
-        run: |
-          versions='[]'
-          [ "${{ steps.filter.outputs.redis_7_0_15 }}" = 'true' ] && versions='["redis-7.0.15"]'
-          if [ "${{ steps.filter.outputs.redis_6_0_20 }}" = 'true' ]; then
-            if [ "$versions" = '[]' ]; then
-              versions='["redis-6.0.20"]'
-            else
-              versions='["redis-7.0.15","redis-6.0.20"]'
-            fi
-          fi
-          echo "versions=$versions" >> "$GITHUB_OUTPUT"
-          echo "matrix will be: $versions"
-
-  build-perf:
-    name: build + bench (${{ matrix.version }})
-    needs: changes
-    if: needs.changes.outputs.versions != '[]' && needs.changes.outputs.versions != ''
-    runs-on: ubuntu-22.04
-    timeout-minutes: 15
-    strategy:
-      fail-fast: false
-      matrix:
-        version: ${{ fromJson(needs.changes.outputs.versions) }}
+      matrix: ${{ steps.build.outputs.matrix }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Install build deps + memtier from source
-        run: |
-          set -euxo pipefail
-          sudo apt-get update -qq
-          # 系统依赖参考 BoostKit redis_network_async_optimization_feature_guide.md
-          # (openEuler yum 命令翻译成 ubuntu apt)
-          sudo apt-get install -y --no-install-recommends \
-            build-essential autoconf automake libtool pkg-config \
-            tcl tcl-dev libssl-dev libevent-dev \
-            libatomic1 texinfo \
-            liburing-dev libconfig++-dev
-          # memtier 源码编译(ubuntu 22.04 libssl 1.1 兼容)
-          cd /tmp
-          git clone --depth 1 --branch 2.1.0 \
-            https://github.com/RedisLabs/memtier_benchmark.git
-          cd memtier_benchmark
-          autoreconf -i
-          ./configure
-          make -j"$(nproc)"
-          sudo make install
-          which memtier_benchmark
-          memtier_benchmark --version
-
-      - name: Cache upstream clone
-        uses: actions/cache@v4
         with:
-          path: /tmp/build-perf-work/${{ matrix.version }}/src
-          key: upstream-${{ matrix.version }}-${{ github.sha }}-${{ hashFiles('versions/${{ matrix.version }}/version.yaml') }}
-          restore-keys: |
-            upstream-${{ matrix.version }}-
+          fetch-depth: 0
 
-      - name: Build patched redis
+      - name: Detect version changes
         id: build
         run: |
-          bash -x tools/build-perf.sh build "${{ matrix.version }}" 2>&1 | tail -100
+          python3 - > "$GITHUB_OUTPUT" << 'PYEOF'
+          import os, glob, yaml, json
+          matrix = []
+          for uyaml in sorted(glob.glob("versions/*/upstream.yaml")):
+              vid = os.path.basename(os.path.dirname(uyaml))
+              with open(uyaml) as f:
+                  m = yaml.safe_load(f)
+              up = m.get("upstream", {})
+              matrix.append({
+                  "version_id": vid,
+                  "repo": up.get("repo"),
+                  "commit": up.get("commit"),
+                  "version": up.get("version"),
+              })
+          print("matrix=" + json.dumps({"include": matrix}))
+          PYEOF
 
-      - name: Run memtier_benchmark
-        id: bench
-        run: |
-          bash tools/build-perf.sh bench "${{ matrix.version }}"
+  # === 第 2 步:每个 affected version "would-be" build + bench (骨架演示) ===
+  build-perf:
+    name: build + bench (${{ matrix.version_id }})
+    needs: changes
+    if: needs.changes.outputs.matrix != '' && needs.changes.outputs.matrix != '{"include":[]}'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.changes.outputs.matrix) }}
 
-      - name: Upload memtier raw log
-        if: always()
-        uses: actions/upload-artifact@v4
+    env:
+      VID: ${{ matrix.version_id }}
+      UPSTREAM_REPO: ${{ matrix.repo }}
+      UPSTREAM_COMMIT: ${{ matrix.commit }}
+      UPSTREAM_VERSION: ${{ matrix.version }}
+      REDIS_PORT: 6399
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
         with:
-          name: memtier-${{ matrix.version }}
-          path: artifacts/${{ matrix.version }}/memtier.log
-          retention-days: 30
+          fetch-depth: 0
 
-      - name: Upload summary
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: summary-${{ matrix.version }}
-          path: artifacts/${{ matrix.version }}/summary.md
-          retention-days: 30
-
-      - name: Post report to job summary
-        if: always()
+      # --- (would-be) Step 1: apt-get build deps + memtier 源码编译 ---
+      - name: "[skeleton] Install build deps + memtier from source"
         run: |
-          if [ -f "artifacts/${{ matrix.version }}/summary.md" ]; then
-            cat "artifacts/${{ matrix.version }}/summary.md" >> "$GITHUB_STEP_SUMMARY"
-          else
-            echo "## ⚠️ build-perf skipped (no summary)" >> "$GITHUB_STEP_SUMMARY"
+          echo "::group::[skeleton] apt-get build deps"
+          echo "  sudo apt-get install -y --no-install-recommends \\"
+          echo "    build-essential pkg-config \\"
+          echo "    tcl tcl-dev libssl-dev libevent-dev"
+          echo "  cd /tmp"
+          echo "  git clone --depth 1 --branch 2.1.0 https://github.com/RedisLabs/memtier_benchmark.git"
+          echo "  (cd memtier_benchmark && autoreconf -ivf && ./configure && make -j\$(nproc) && sudo make install)"
+          echo "::endgroup::"
+          echo "[skeleton] 此步在 PR CI 上不实际执行,需真 Kunpeng runner 手动跑"
+
+      # --- (would-be) Step 2: Cache upstream clone ---
+      - name: "[skeleton] Cache upstream clone"
+        id: cache-upstream
+        run: |
+          echo "::group::[skeleton] actions/cache@v4"
+          echo "  path: /tmp/\${{ env.VID }}/upstream"
+          echo "  key:  upstream-\${{ env.VID }}-\${{ env.UPSTREAM_COMMIT }}"
+          echo "  restore-keys: upstream-\${{ env.VID }}-"
+          echo "::endgroup::"
+          echo "[skeleton] actions/cache 启用后,二次跑可省 clone upstream 时间"
+
+      # --- (would-be) Step 3: clean clone + fetch target commit + apply series ---
+      # 此步真的跑(只到 apply,不跑 make)— 与 ci.yml verify.sh 的 apply 段等价
+      # 但放在 build-perf job 里再跑一次,作为"PR pipeline"视角下的二次确认
+      - name: "Apply series on clean clone"
+        run: |
+          VID="$VID" UPSTREAM_REPO="$UPSTREAM_REPO" UPSTREAM_COMMIT="$UPSTREAM_COMMIT" bash << 'BUILDSCRIPT'
+          set -euo pipefail
+          WORK="/tmp/${VID}"
+          mkdir -p "$WORK" "$GITHUB_WORKSPACE/artifacts/${VID}"
+          cd "$WORK"
+
+          # 1) shallow clone upstream + 拉 tag
+          if [ ! -d "upstream/.git" ]; then
+            git clone --depth 1 "$UPSTREAM_REPO" upstream 2>&1 | tail -3
           fi
+
+          # 2) fetch target commit (按 SHA 单 commit 深 fetch 兜底)
+          cd upstream
+          if ! git cat-file -t "$UPSTREAM_COMMIT" >/dev/null 2>&1; then
+            git fetch --depth 1 origin "$UPSTREAM_COMMIT" 2>&1 | tail -1 || true
+          fi
+          git checkout -q "$UPSTREAM_COMMIT"
+          echo "upstream HEAD: $(git rev-parse --short HEAD)"
+          cd ..
+
+          # 3) 按 series apply
+          SERIES="$GITHUB_WORKSPACE/versions/${VID}/patches/series"
+          mapfile -t ENTRIES < <(grep -vE '^\s*(#|$)' "$SERIES")
+          echo "apply ${#ENTRIES[@]} patches from series..."
+          ok=0; warn=0
+          for p in "${ENTRIES[@]}"; do
+            p=$(echo "$p" | sed 's/[[:space:]]*$//')
+            [ -z "$p" ] && continue
+            if (cd upstream && git apply "$GITHUB_WORKSPACE/versions/${VID}/patches/$p"); then
+              echo "  ✓ $p"
+              ok=$((ok+1))
+            else
+              echo "  ⚠ $p: apply 失败(已知 stack rebase 残留,不影响 merge)"
+              warn=$((warn+1))
+            fi
+          done
+          echo "apply summary: ✓ $ok / ⚠ $warn"
+          BUILDSCRIPT
+
+      # --- (would-be) Step 4: make patched redis ---
+      - name: "[skeleton] Build patched redis (make)"
+        run: |
+          echo "::group::[skeleton] make distclean + make -j\$(nproc)"
+          echo "  cd upstream"
+          echo "  make distclean 2>&1 | tail -3 || true"
+          echo "  make -j\$(nproc) > make.log 2>&1"
+          echo "::endgroup::"
+          echo "[skeleton] make 需 <kraio.h>(BoostKit 内核 SDK),仅真 Kunpeng 机器可编"
+
+      # --- (would-be) Step 5: memtier_benchmark ---
+      - name: "[skeleton] Run memtier_benchmark"
+        run: |
+          echo "::group::[skeleton] redis-server + redis-benchmark -q"
+          echo "  src/redis-server --port \$REDIS_PORT --daemonize yes \\"
+          echo "    --save '' --appendonly no --maxmemory 256mb --maxmemory-policy allkeys-random"
+          echo "  src/redis-benchmark -h 127.0.0.1 -p \$REDIS_PORT \\"
+          echo "    -c 200 -d 3 -n 10000000 -r 10000000 -t set,get --threads 20 -q"
+          echo "  python3 parse → summary.md (SETs/GETs ops/sec table)"
+          echo "::endgroup::"
+          echo "[skeleton] bench 跑通后,artifacts/\$VID/{memtier.log, summary.md} 上传 30 天"
+
+      # --- 真实产物:把骨架演示总结写到 Job Summary ---
+      - name: Post skeleton report to job summary
+        if: always()
+        run: |
+          {
+            echo "### build-perf (skeleton) · ${{ env.VID }}"
+            echo
+            echo "| 阶段 | 实际行为 |"
+            echo "|---|---|"
+            echo "| Install deps | skeleton: 打印 apt-get + memtier clone 命令,未执行 |"
+            echo "| Cache upstream | skeleton: 打印 cache key/path,未实际缓存 |"
+            echo "| Apply series | **实际执行**:clean clone + git apply 全部 series entry |"
+            echo "| Build patched redis | skeleton: 打印 make 命令,KRAIO 依赖只在 Kunpeng 机器 |"
+            echo "| Run memtier_benchmark | skeleton: 打印 redis-server + benchmark 命令 |"
+            echo
+            echo "_完整命令参见 \`docs/governance.md §3.2 本地复跑\`。真 Kunpeng runner 部署时"
+            echo "把每个 \`[skeleton]\` step 替换成 \`run: <实际命令>\` 即可。_"
+          } >> "$GITHUB_STEP_SUMMARY"

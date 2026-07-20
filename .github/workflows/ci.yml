@@ -1,21 +1,14 @@
-# Patch overlay CI —— 规范 §8.1 实施
+# Patch overlay CI —— v2.0 模型
 #
-# 流程 (按规范 §8.1 ci.yml):
-#   1. tools/sync-manifest.py --check   (PATCHES.yaml / WHITELIST.yaml / docs/PATCHES-STATUS.md 与 version.yaml 一致)
-#   2. yaml schema 校验 (verify.sh 第 2 阶段)
-#   3. patch 文件名格式校验 (verify.sh 第 2 阶段)
-#   4. upstream apply dry-run (verify.sh 第 3 阶段)
-#   5. whitelist_reason 字数 + reason 文本检查
+# 流程 (按 docs/version-yaml-spec.md + docs/governance.md):
+#   1. tools/verify.sh        —— 仓根禁放 + upstream.yaml schema + clean clone + 按 series apply
+#   2. .github/lint_patch_headers.py —— patch 邮件式头 schema 校验
+#   3. .github/lint_series.py —— series 一致性(无孤儿 + 无重复)
 #
-# 失败策略 (规范 §8.2):
+# 失败策略:
 #   - ci.yml 任何一项 fail = block merge
 #   - build-perf build 失败 = block merge
 #   - build-perf bench 异常 = warn 不 block
-#   - upstream-test 失败 = warn, owner 解释
-#
-# sync-manifest drift 自动化 (规范 §8.3):
-#   - merge 前 PATCHES.yaml 必须与 version.yaml 推导结果完全一致
-#   - drift 时 CI 自动 commit 修复并 push
 
 name: ci
 
@@ -31,7 +24,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: write   # sync-manifest --write 时需要 commit/push
+  contents: read
 
 jobs:
   verify:
@@ -43,53 +36,18 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install pyyaml
         run: pip install pyyaml --quiet
 
-      # 1. sync-manifest drift 检测 (§8.1 阶段 1) — 不 exit 1,把 drift 标志传给下一步
-      - name: Sync manifest check
-        id: sync-check
-        run: |
-          set +e
-          python3 tools/sync-manifest.py --check
-          rc=$?
-          set -e
-          if [ "$rc" = "0" ]; then
-            echo "drift=false" >> "$GITHUB_OUTPUT"
-            echo "fix_needed=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "drift=true" >> "$GITHUB_OUTPUT"
-            echo "fix_needed=true" >> "$GITHUB_OUTPUT"
-          fi
-
-      # 1.5 drift 自动修复 + push (规范 §8.3) — 只在确实 drift 时跑
-      # push 目标:PR 触发时推到 PR head ref,push master / workflow_dispatch 时推到当前 ref
-      #   - github.head_ref: PR 触发时 = PR 源分支(如 test/fix-foo);其他触发时为空
-      #   - github.ref_name: push/workflow_dispatch 时 = 分支名(如 master)
-      #   - 默认空字符串 fallback 到 master,避免 detached HEAD 下 `git push` 失败
-      - name: Auto-fix manifest drift
-        if: steps.sync-check.outputs.fix_needed == 'true'
-        run: |
-          python3 tools/sync-manifest.py --write
-          git config user.name "boostkit-bot"
-          git config user.email "boostkit-bot@boostkit"
-          git add PATCHES.yaml WHITELIST.yaml docs/PATCHES-STATUS.md
-          if git diff --cached --quiet; then
-            echo "nothing to commit"
-          else
-            git commit -m "manifest: auto-sync from version.yaml [skip ci]"
-            target_ref="${{ github.head_ref || github.ref_name }}"
-            target_ref="${target_ref:-master}"
-            echo "push target: origin HEAD:$target_ref"
-            git push "origin" "HEAD:$target_ref"
-          fi
-
-      # 2-4. yaml schema + 文件名 + apply dry-run (verify.sh)
-      - name: Verify (schema + apply dry-run)
+      # 1. 结构 + clean apply(tools/verify.sh)
+      - name: Verify (structure + clean apply)
         run: bash tools/verify.sh
 
-      # 5. whitelist 审计 (§4.4)
-      - name: Whitelist audit
-        run: python3 tools/whitelist-audit.py --strict
+      # 2. patch 邮件式头 schema
+      - name: Patch header schema lint
+        run: python3 .github/lint_patch_headers.py versions/*/patches/
+
+      # 3. series 一致性
+      - name: Series consistency lint
+        run: python3 .github/lint_series.py versions/*/patches/

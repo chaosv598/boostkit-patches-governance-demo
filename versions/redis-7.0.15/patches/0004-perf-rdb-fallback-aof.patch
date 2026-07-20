@@ -3,6 +3,10 @@ From: boostkit-dev <dev@boostkit.local>
 Date: Mon, 13 Jul 2026 20:05:00 +0800
 Subject: [PATCH] redis-7.0.15-rdb-aof-fallback
 
+Upstream-Status: Submitted
+Upstream-PR: https://github.com/redis/redis/pull/13579
+Signed-off-by: boostkit-dev <dev@boostkit.local>
+
 Add AOF fallback when RDB load fails at startup.
 
 When the RDB file on disk is corrupted / truncated / unreadable,

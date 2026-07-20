@@ -1,0 +1,4 @@
+# 系列:redis-6.0.20 patch 应用顺序
+# 每行一个 patch 路径(相对本目录),自上而下应用
+
+0001-hw-kunpeng-adapt-iouring-on-6.0.15-6.0.20.patch
