@@ -38,9 +38,17 @@ features:
       - 0002-perf-kunpeng-adapt-dtoe.patch
     depends: []
     default: true
+    # Yocto/OpenEmbedded 8 状态全集(给 dashboard 用稳定 shape,值为该 feature 下 patch 计数)
+    # 业界参照:Yocto recipe Upstream-Status + OpenEmbedded meta/recipes-* status 字段
     upstream_status_summary:
+      Pending: 0
       Submitted: 1
+      Accepted: 0
+      Rejected: 0
+      Backport: 0
+      Denied: 0
       Inappropriate: 1
+      Inactive-Upstream: 0
 
   # ─── jemalloc ARM64 pointer-tag + GC decay 策略优化 ───
   jemalloc-arm64:
@@ -50,7 +58,14 @@ features:
     depends: []
     default: false
     upstream_status_summary:
+      Pending: 0
       Submitted: 1
+      Accepted: 0
+      Rejected: 0
+      Backport: 0
+      Denied: 0
+      Inappropriate: 0
+      Inactive-Upstream: 0
 
   # ─── RDB 损坏时降级到 AOF,避免硬停服 ───
   rdb-aof-fallback:
@@ -60,7 +75,14 @@ features:
     depends: []
     default: true
     upstream_status_summary:
+      Pending: 0
       Submitted: 1
+      Accepted: 0
+      Rejected: 0
+      Backport: 0
+      Denied: 0
+      Inappropriate: 0
+      Inactive-Upstream: 0
 
   # ─── 业务组合示例(供运维参考,实际由 ACTIVE_FEATURES 决定) ───
   #

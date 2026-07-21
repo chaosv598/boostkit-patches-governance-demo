@@ -29,6 +29,21 @@ from pathlib import Path
 import yaml
 
 DEP3_REQUIRED = ("Description", "Origin", "Upstream-Status", "Applies-To", "Maintainer", "Last-Update")
+
+# Yocto/OpenEmbedded Upstream-Status 8 状态枚举
+# 参照:https://docs.openembedded.org/arch-current/contributor-guide/recipe-style-guide.html
+# 对应 docs/version-yaml-spec.md §4.5
+YOCTO_UPSTREAM_STATES = frozenset({
+    "Pending",
+    "Submitted",
+    "Accepted",
+    "Rejected",
+    "Backport",
+    "Denied",
+    "Inappropriate",
+    "Inactive-Upstream",
+})
+
 HEADER_END_RE = re.compile(r"^(diff --git |--- |\+\+\+ )", re.MULTILINE)
 
 
@@ -95,6 +110,23 @@ def lint_features(features_yaml: Path) -> list[str]:
         if not isinstance(deps, list):
             errs.append(f"{features_yaml}: feature {fname!r}: depends 不是 list")
             deps = []
+
+        # 1.a upstream_status_summary schema:key 必须是 Yocto 8 状态枚举
+        summary = info.get("upstream_status_summary")
+        if summary is not None:
+            if not isinstance(summary, dict):
+                errs.append(f"{features_yaml}: feature {fname!r}.upstream_status_summary 不是 dict")
+            else:
+                for st, cnt in summary.items():
+                    if st not in YOCTO_UPSTREAM_STATES:
+                        errs.append(
+                            f"{features_yaml}: feature {fname!r}.upstream_status_summary "
+                            f"含非 Yocto 8 状态 key={st!r}(合法值: {sorted(YOCTO_UPSTREAM_STATES)})"
+                        )
+                    if not isinstance(cnt, int) or cnt < 0:
+                        errs.append(
+                            f"{features_yaml}: feature {fname!r}.upstream_status_summary[{st!r}]={cnt} 不是非负整数"
+                        )
 
     # 2. depends 引用必须存在
     for fname, info in features.items():

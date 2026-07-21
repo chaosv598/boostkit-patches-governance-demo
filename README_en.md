@@ -91,21 +91,46 @@ features:
       - 0002-perf-kunpeng-adapt-dtoe.patch
     depends: []
     default: true                                # enabled by default
+    # Yocto/OE 8-state full set (stable shape for dashboard; value = patch count in this feature)
     upstream_status_summary:
+      Pending: 0
       Submitted: 1
+      Accepted: 0
+      Rejected: 0
+      Backport: 0
+      Denied: 0
       Inappropriate: 1
+      Inactive-Upstream: 0
   jemalloc-arm64:
     title: "jemalloc ARM64 pointer-tag + GC decay strategy"
     patches:
       - 0001-perf-jemalloc-arm64-pointer-tag-and-gc.patch
     depends: []
     default: false                               # not enabled by default
+    upstream_status_summary:
+      Pending: 0
+      Submitted: 1
+      Accepted: 0
+      Rejected: 0
+      Backport: 0
+      Denied: 0
+      Inappropriate: 0
+      Inactive-Upstream: 0
   rdb-aof-fallback:
     title: "AOF fallback when RDB corrupted"
     patches:
       - 0001-perf-rdb-fallback-aof.patch
     depends: []
     default: true
+    upstream_status_summary:
+      Pending: 0
+      Submitted: 1
+      Accepted: 0
+      Rejected: 0
+      Backport: 0
+      Denied: 0
+      Inappropriate: 0
+      Inactive-Upstream: 0
 ```
 
 Physical patches are organized by feature:
@@ -247,6 +272,15 @@ PR-only workflow. No direct pushes to master.
 
 ## Change Log
 
+- **2026-07-21** v5.3: `upstream_status_summary` aligned to the full Yocto/OpenEmbedded
+  **8-state set** (Pending / Submitted / Accepted / Rejected / Backport / Denied /
+  Inappropriate / Inactive-Upstream) for a stable dashboard shape (all 8 keys present,
+  unused entries 0). `lint_series.py` now enforces schema: keys must be from this 8-state
+  enum, values must be non-negative integers (invalid keys are reported with the legal
+  list). **`depends` field wired end-to-end**: `apply_patch.sh` python inline does DFS
+  resolution + hard-fail on cycles, `lint_series.py` validates reference existence +
+  no-cycle; `ACTIVE_FEATURES=C` where `C.depends=[B]` and `B.depends=[A]` applies in
+  order A → B → C.
 - **2026-07-21** v5.2: feature dirs renamed from abstract letters
   (`feature-A` / `feature-B` / `feature-C`) to descriptive kebab-case names
   (`kunpeng-hw-accel` / `jemalloc-arm64` / `rdb-aof-fallback`) per industry

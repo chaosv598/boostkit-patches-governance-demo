@@ -91,21 +91,46 @@ features:
       - 0002-perf-kunpeng-adapt-dtoe.patch
     depends: []
     default: true                                # 默认激活
+    # Yocto/OE 8 状态全集(dashboard 用稳定 shape;值为该 feature 下 patch 计数)
     upstream_status_summary:
+      Pending: 0
       Submitted: 1
+      Accepted: 0
+      Rejected: 0
+      Backport: 0
+      Denied: 0
       Inappropriate: 1
+      Inactive-Upstream: 0
   jemalloc-arm64:
     title: "jemalloc ARM64 pointer-tag + GC decay 策略优化"
     patches:
       - 0001-perf-jemalloc-arm64-pointer-tag-and-gc.patch
     depends: []
     default: false                               # 默认不激活
+    upstream_status_summary:                     # 全 8 状态占位(Submitted:1 其余 0)
+      Pending: 0
+      Submitted: 1
+      Accepted: 0
+      Rejected: 0
+      Backport: 0
+      Denied: 0
+      Inappropriate: 0
+      Inactive-Upstream: 0
   rdb-aof-fallback:
     title: "RDB 损坏时降级到 AOF,避免硬停服"
     patches:
       - 0001-perf-rdb-fallback-aof.patch
     depends: []
     default: true
+    upstream_status_summary:
+      Pending: 0
+      Submitted: 1
+      Accepted: 0
+      Rejected: 0
+      Backport: 0
+      Denied: 0
+      Inappropriate: 0
+      Inactive-Upstream: 0
 ```
 
 物理 patch 按 feature 分目录:
@@ -245,6 +270,12 @@ make distclean && make -j$(nproc) -DHAVE_KRAIO
 
 ## 变更通知
 
+- **2026-07-21** v5.3:`upstream_status_summary` 对齐 Yocto/OpenEmbedded **8 状态全集**
+  (Pending / Submitted / Accepted / Rejected / Backport / Denied / Inappropriate /
+  Inactive-Upstream),dashboard 用稳定 shape(8 个 key 全列,缺位 0)。`lint_series.py`
+  强制 schema:key 必须是这 8 状态之一,值非负整数(非法 key 会被 grep 列表给出)。**`depends`
+  字段端到端连通**:`apply_patch.sh` python inline DFS 解析+环依赖 hard-fail,`lint_series.py`
+  引用存在性+无环校验;`ACTIVE_FEATURES=C` 且 `C.depends=[B]` `B.depends=[A]` 时按 A→B→C 顺序 apply。
 - **2026-07-21** v5.2:feature 目录从抽象字母命名(`feature-A` / `feature-B` / `feature-C`)
   改为业界 kebab-case 描述名(`kunpeng-hw-accel` / `jemalloc-arm64` / `rdb-aof-fallback`),
   对齐 OpenWrt `package/network/services/dnsmasq/`、Buildroot `package/redis/`、
