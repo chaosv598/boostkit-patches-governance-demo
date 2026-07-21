@@ -12,17 +12,9 @@ features:
       - 0001-hw-kunpeng-adapt-iouring-on-6.0.15-6.0.20.patch
     depends: []
     default: true
-    # Yocto/OpenEmbedded 8 状态全集(给 dashboard 用稳定 shape,值为该 feature 下 patch 计数)
-    # 业界参照:Yocto recipe Upstream-Status + OpenEmbedded meta/recipes-* status 字段
-    upstream_status_summary:
-      Pending: 1
-      Submitted: 0
-      Accepted: 0
-      Rejected: 0
-      Backport: 0
-      Denied: 0
-      Inappropriate: 0
-      Inactive-Upstream: 0
+    # 该 feature 在 patch overlay 中的"主导上游状态"(用于 dashboard 过滤)
+    # 业界参照:Yocto recipe Upstream-Status 字段(单值枚举)
+    upstream_status: Pending
 
 # 历史说明:
 #   6.0.20 早期有 kunpeng-hw-accel DTOE + jemalloc-arm64 两个特性,

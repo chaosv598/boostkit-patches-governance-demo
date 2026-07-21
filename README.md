@@ -91,46 +91,22 @@ features:
       - 0002-perf-kunpeng-adapt-dtoe.patch
     depends: []
     default: true                                # 默认激活
-    # Yocto/OE 8 状态全集(dashboard 用稳定 shape;值为该 feature 下 patch 计数)
-    upstream_status_summary:
-      Pending: 0
-      Submitted: 1
-      Accepted: 0
-      Rejected: 0
-      Backport: 0
-      Denied: 0
-      Inappropriate: 1
-      Inactive-Upstream: 0
+    # feature 主导上游状态(Yocto 8 状态枚举单值)
+    upstream_status: Inappropriate
   jemalloc-arm64:
     title: "jemalloc ARM64 pointer-tag + GC decay 策略优化"
     patches:
       - 0001-perf-jemalloc-arm64-pointer-tag-and-gc.patch
     depends: []
     default: false                               # 默认不激活
-    upstream_status_summary:                     # 全 8 状态占位(Submitted:1 其余 0)
-      Pending: 0
-      Submitted: 1
-      Accepted: 0
-      Rejected: 0
-      Backport: 0
-      Denied: 0
-      Inappropriate: 0
-      Inactive-Upstream: 0
+    upstream_status: Submitted
   rdb-aof-fallback:
     title: "RDB 损坏时降级到 AOF,避免硬停服"
     patches:
       - 0001-perf-rdb-fallback-aof.patch
     depends: []
     default: true
-    upstream_status_summary:
-      Pending: 0
-      Submitted: 1
-      Accepted: 0
-      Rejected: 0
-      Backport: 0
-      Denied: 0
-      Inappropriate: 0
-      Inactive-Upstream: 0
+    upstream_status: Submitted
 ```
 
 物理 patch 按 feature 分目录:
@@ -270,6 +246,11 @@ make distclean && make -j$(nproc) -DHAVE_KRAIO
 
 ## 变更通知
 
+- **2026-07-21** v5.3.1:`upstream_status_summary`(8 键 dict)→ 单值 `upstream_status: <state>`。
+  v5.3 那个 8 状态块是 dashboard 自创、无 Yocto 业界背书,改为单值符合 Yocto recipe
+  `Upstream-Status` 字段语义(单值枚举)。`lint_series.py` schema 校验同步从 dict 改为单值枚举
+  校验(Yocto 8 状态之一)。`lint_patch_headers.py` 里 Yocto 8 状态枚举校验保留(那里是真源头)。
+  `depends` 字段端到端连通保留(DFS 解析+环依赖 hard-fail)。
 - **2026-07-21** v5.3:`upstream_status_summary` 对齐 Yocto/OpenEmbedded **8 状态全集**
   (Pending / Submitted / Accepted / Rejected / Backport / Denied / Inappropriate /
   Inactive-Upstream),dashboard 用稳定 shape(8 个 key 全列,缺位 0)。`lint_series.py`

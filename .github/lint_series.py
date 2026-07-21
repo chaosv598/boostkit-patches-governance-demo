@@ -111,22 +111,15 @@ def lint_features(features_yaml: Path) -> list[str]:
             errs.append(f"{features_yaml}: feature {fname!r}: depends 不是 list")
             deps = []
 
-        # 1.a upstream_status_summary schema:key 必须是 Yocto 8 状态枚举
-        summary = info.get("upstream_status_summary")
-        if summary is not None:
-            if not isinstance(summary, dict):
-                errs.append(f"{features_yaml}: feature {fname!r}.upstream_status_summary 不是 dict")
-            else:
-                for st, cnt in summary.items():
-                    if st not in YOCTO_UPSTREAM_STATES:
-                        errs.append(
-                            f"{features_yaml}: feature {fname!r}.upstream_status_summary "
-                            f"含非 Yocto 8 状态 key={st!r}(合法值: {sorted(YOCTO_UPSTREAM_STATES)})"
-                        )
-                    if not isinstance(cnt, int) or cnt < 0:
-                        errs.append(
-                            f"{features_yaml}: feature {fname!r}.upstream_status_summary[{st!r}]={cnt} 不是非负整数"
-                        )
+        # 1.a upstream_status schema:单值,必须是 Yocto 8 状态枚举之一
+        # 业界参照:Yocto recipe Upstream-Status(单值)+ 该 feature 下 patch 头 Upstream-Status: 聚合
+        up_status = info.get("upstream_status")
+        if up_status is not None:
+            if up_status not in YOCTO_UPSTREAM_STATES:
+                errs.append(
+                    f"{features_yaml}: feature {fname!r}.upstream_status={up_status!r} "
+                    f"不是 Yocto 8 状态之一(合法值: {sorted(YOCTO_UPSTREAM_STATES)})"
+                )
 
     # 2. depends 引用必须存在
     for fname, info in features.items():

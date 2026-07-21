@@ -133,16 +133,8 @@ features:
       - 0002-perf-kunpeng-adapt-dtoe.patch
     depends: []               # 无依赖
     default: true             # 默认激活
-    # Yocto/OpenEmbedded 8 状态全集(dashboard 用稳定 shape,值为该 feature 下 patch 计数)
-    upstream_status_summary:
-      Pending: 0
-      Submitted: 1
-      Accepted: 0
-      Rejected: 0
-      Backport: 0
-      Denied: 0
-      Inappropriate: 1
-      Inactive-Upstream: 0
+    # 该 feature 主导上游状态(Yocto 8 状态单值枚举)
+    upstream_status: Inappropriate
 
   jemalloc-arm64:
     title: "jemalloc ARM64 pointer-tag + GC decay 策略优化"
@@ -150,15 +142,7 @@ features:
       - 0001-perf-jemalloc-arm64-pointer-tag-and-gc.patch
     depends: []
     default: false            # 默认不激活
-    upstream_status_summary:
-      Pending: 0
-      Submitted: 1
-      Accepted: 0
-      Rejected: 0
-      Backport: 0
-      Denied: 0
-      Inappropriate: 0
-      Inactive-Upstream: 0
+    upstream_status: Submitted
 
   rdb-aof-fallback:
     title: "RDB 损坏时降级到 AOF,避免硬停服"
@@ -166,15 +150,7 @@ features:
       - 0001-perf-rdb-fallback-aof.patch
     depends: []               # 若 depends: [kunpeng-hw-accel] 则激活 C 时自动 include A
     default: true
-    upstream_status_summary:
-      Pending: 0
-      Submitted: 1
-      Accepted: 0
-      Rejected: 0
-      Backport: 0
-      Denied: 0
-      Inappropriate: 0
-      Inactive-Upstream: 0
+    upstream_status: Submitted
 ```
 
 ### 3.2 字段表
@@ -185,7 +161,7 @@ features:
 | `features.<name>.patches` | **是** | list[str] | 该 feature 包含的 patch 文件名(相对 `patches/features/<name>/`) |
 | `features.<name>.depends` | 否 | list[str] | 依赖的其他 feature(本 feature 激活时,依赖项自动激活并先 apply) |
 | `features.<name>.default` | 否 | bool | 是否默认激活(默认组合 = 所有 `default:true` 的并集) |
-| `features.<name>.upstream_status_summary` | 否 | dict[str,int] | 该 feature 下 patch 状态分布(给 dashboard 用;**key 必须是 Yocto 8 状态枚举,详见 §4.5**;值非负整数)。**详细状态见每个 patch 邮件式头 `Upstream-Status:`** |
+| `features.<name>.upstream_status` | 否 | enum | 该 feature 在 patch overlay 中的主导上游状态(**Yocto 8 状态枚举之一,详见 §4.5**;给 dashboard 用)。详细 per-patch 状态见每个 .patch 邮件式头 `Upstream-Status:` |
 
 ### 3.3 物理目录布局
 

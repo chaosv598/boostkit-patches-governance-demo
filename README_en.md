@@ -91,46 +91,22 @@ features:
       - 0002-perf-kunpeng-adapt-dtoe.patch
     depends: []
     default: true                                # enabled by default
-    # Yocto/OE 8-state full set (stable shape for dashboard; value = patch count in this feature)
-    upstream_status_summary:
-      Pending: 0
-      Submitted: 1
-      Accepted: 0
-      Rejected: 0
-      Backport: 0
-      Denied: 0
-      Inappropriate: 1
-      Inactive-Upstream: 0
+    # Feature-level dominant upstream state (Yocto 8-state enum, single value)
+    upstream_status: Inappropriate
   jemalloc-arm64:
     title: "jemalloc ARM64 pointer-tag + GC decay strategy"
     patches:
       - 0001-perf-jemalloc-arm64-pointer-tag-and-gc.patch
     depends: []
     default: false                               # not enabled by default
-    upstream_status_summary:
-      Pending: 0
-      Submitted: 1
-      Accepted: 0
-      Rejected: 0
-      Backport: 0
-      Denied: 0
-      Inappropriate: 0
-      Inactive-Upstream: 0
+    upstream_status: Submitted
   rdb-aof-fallback:
     title: "AOF fallback when RDB corrupted"
     patches:
       - 0001-perf-rdb-fallback-aof.patch
     depends: []
     default: true
-    upstream_status_summary:
-      Pending: 0
-      Submitted: 1
-      Accepted: 0
-      Rejected: 0
-      Backport: 0
-      Denied: 0
-      Inappropriate: 0
-      Inactive-Upstream: 0
+    upstream_status: Submitted
 ```
 
 Physical patches are organized by feature:
@@ -272,6 +248,13 @@ PR-only workflow. No direct pushes to master.
 
 ## Change Log
 
+- **2026-07-21** v5.3.1: `upstream_status_summary` (8-key dict) → single-value
+  `upstream_status: <state>`. v5.3's 8-state block was a local dashboard invention
+  with no Yocto backing; single value matches Yocto recipe `Upstream-Status` field
+  semantics (single-value enum). `lint_series.py` schema check switched from dict
+  validation to single-value enum validation (one of Yocto 8 states). `lint_patch_headers.py`
+  keeps the Yocto 8-state enum validation (that's the real source). `depends` field
+  end-to-end wiring retained (DFS resolution + cycle hard-fail).
 - **2026-07-21** v5.3: `upstream_status_summary` aligned to the full Yocto/OpenEmbedded
   **8-state set** (Pending / Submitted / Accepted / Rejected / Backport / Denied /
   Inappropriate / Inactive-Upstream) for a stable dashboard shape (all 8 keys present,
