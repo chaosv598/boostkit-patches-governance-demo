@@ -159,7 +159,7 @@ features:
 |---|---|---|---|
 | `features.<name>.title` | 推荐 | string | 一句话描述(给 dashboard / 文档用) |
 | `features.<name>.patches` | **是** | list[str] | 该 feature 包含的 patch 文件名(相对 `patches/features/<name>/`) |
-| `features.<name>.depends` | 否 | list[str] | 依赖的其他 feature(本 feature 激活时,依赖项自动激活并先 apply) |
+| `features.<name>.depends` | 否 | list[str] | 依赖的其他 feature(本 feature 激活时,依赖项自动激活并先 apply)。**业界参照:Linux kernel Kconfig `depends on` + OpenWrt `Makefile` 条件 `PATCHFILES` —— 同款 DFS 深度优先解析 + 环依赖 hard-fail** |
 | `features.<name>.default` | 否 | bool | 是否默认激活(默认组合 = 所有 `default:true` 的并集) |
 | `features.<name>.upstream_status` | 否 | enum | 该 feature 在 patch overlay 中的主导上游状态(**Yocto 8 状态枚举之一,详见 §4.5**;给 dashboard 用)。详细 per-patch 状态见每个 .patch 邮件式头 `Upstream-Status:` |
 

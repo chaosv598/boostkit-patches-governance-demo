@@ -13,6 +13,8 @@
 #   title           一句话描述
 #   patches         该特性包含的 patch 文件列表(相对 patches/features/<feature>/)
 #   depends         该特性依赖的其他特性(本特性被激活时,依赖项自动激活并先 apply)
+#                   业界参照:Linux kernel Kconfig `depends on`(<URL>)深度优先解析
+#                   + OpenWrt package/<name>/Makefile 条件 PATCHFILES
 #   default         是否默认激活(默认组合 = 所有 default:true 的并集)
 #   upstream_status 摘要(本特性下 patch 整体上游状态;详细见 patch 邮件式头)
 #

@@ -158,6 +158,14 @@ Linux kernel 用 Kconfig 表达"配置项之间依赖",核心语义:
 - 自动 include 依赖 + dedup = Linux kernel 的 `select` 反向语义
 - `default: true/false` = `default y/n`
 
+**双业界出处覆盖**(互为补充,共同背书本仓 `depends` 设计):
+- **Linux kernel Kconfig** `depends on` — 解析算法(DFS + 环检测)
+  https://www.kernel.org/doc/Documentation/kbuild/kconfig-language.rst
+- **OpenWrt** `package/<name>/Makefile` 条件 `PATCHFILES` — 依赖激活后
+  哪些 patch 进 build 的实际产出机制
+  https://github.com/openwrt/openwrt/tree/main/package/network/services/dnsmasq/Makefile
+  (参考:`PKG_BUILD_DEPENDS` 触发 PATCHFILES 列表)
+
 ### 2.6 Feature 声明 + 组合 — OpenWrt Config.in + Kconfig 风格
 
 **问题**:同一 upstream 下常有"N 个特性 + 自由组合 + 特性间有依赖"需求
@@ -221,6 +229,7 @@ bash tools/apply_patch.sh ... --features ... --active "jemalloc-arm64 rdb-aof-fa
 | ↳ apply 步骤 | **OpenWrt** `scripts/patch-kernel.sh` | 同样 line walking 模式(OpenWrt 自己也说 "modeled after Buildroot") |
 | ↳ clone + fetch + checkout | **git** 自身 | `--depth 1` shallow clone + 按 SHA `git fetch` 兜底 |
 | ↳ `--features <yaml>` compose | **OpenWrt** `package/<name>/Config.in` + **Linux kernel Kconfig** + **Yocto** `.bbappend` | inline python heredoc 解析 features.yaml + 深度优先 depends 解析 + 环检测 + 写 tmp series |
+| ↳ `depends` DFS 解析 | **Linux kernel Kconfig** `depends on`(<URL>) + **OpenWrt** `Makefile` 条件 `PATCHFILES` | 同款 DFS 深度优先 + 环依赖 hard-fail;activate feature 时其依赖自动 include 并先 apply |
 | ↳ `--active "f1 f2"` | **OpenWrt** `Makefile` 条件 PATCHFILES + **Yocto** `bb.utils.contains` | 默认 = `default:true` 并集;env 或 CLI 覆盖 |
 | **`tools/verify.sh`** (PR gate) | | |
 | ↳ step 1: 仓根禁放检查 | **Buildroot** `support/scripts/check-package` + **OpenWrt** `scripts/feeds` + **Linux kernel** `scripts/checkpatch.pl` | 仓根不能有 `.patch` / `Dockerfile` / `Makefile` / `src/` 等;强制目录契约 |

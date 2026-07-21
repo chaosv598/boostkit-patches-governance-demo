@@ -167,8 +167,11 @@ bash tools/apply_patch.sh ... --features ... --active "jemalloc-arm64 rdb-aof-fa
 `depends` 字段让 feature 自动 include 依赖项(例:rdb-aof-fallback.depends=[kunpeng-hw-accel] 时,
 激活 C 会自动先 apply A)。
 
-业界出处:OpenWrt `package/<name>/Config.in`(bool + depends + default)+ Linux kernel `Kconfig` + Yocto 条件 SRC_URI。
-详见 [docs/version-yaml-spec.md §3](./docs/version-yaml-spec.md#3-patchesfeaturesyamlopenwrt-configin-风格--v50-单一权威)。
+`depends` 字段双业界出处:
+- **Linux kernel Kconfig** `depends on`(同款 DFS 深度优先解析 + 环依赖 hard-fail)
+- **OpenWrt** `package/<name>/Makefile` 条件 `PATCHFILES`(依赖激活后才进 build)
+详见 [docs/governance.md §2.5](./docs/governance.md#25-linux-kernel-kconfig--depends--select--default-语义)
++ [docs/version-yaml-spec.md §3](./docs/version-yaml-spec.md#3-patchesfeaturesyamlopenwrt-configin-风格--v50-单一权威)。
 
 ### 2.6 单独跑 feature apply(Buildroot 风格)
 

@@ -15,6 +15,7 @@
 #   - Linux kernel Kconfig: depends / select / default 语义
 #     https://www.kernel.org/doc/Documentation/kbuild/kconfig-language.rst
 #     深度优先 depends 解析 + 环依赖检测 —— 本仓 inline python heredoc 实现
+#     本仓 features.<name>.depends 字段直接对齐 Kconfig `depends on`(同款 DFS + 环检测)
 #   - Yocto/OpenEmbedded: recipes-*/<pkg>.bbappend 条件 SRC_URI
 #     ${@bb.utils.contains('DISTRO_FEATURES', 'x', 'y', '', d)} —— 对应 ACTIVE_FEATURES
 #   - DEP-3:     patch 邮件式头 schema

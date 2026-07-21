@@ -167,7 +167,11 @@ bash tools/apply_patch.sh ... --features ... --active "jemalloc-arm64 rdb-aof-fa
 The `depends` field makes features auto-include their dependencies (e.g. if `rdb-aof-fallback.depends=[kunpeng-hw-accel]`,
 activating C automatically applies A first).
 
-See [docs/version-yaml-spec.md §3](./docs/version-yaml-spec.md#3-patchesfeaturesyamlopenwrt-configin-style--v50-single-source).
+Dual industry backing for `depends`:
+- **Linux kernel Kconfig** `depends on` (same DFS depth-first resolution + cycle hard-fail)
+- **OpenWrt** `package/<name>/Makefile` conditional `PATCHFILES` (only enters build when dependency active)
+See [docs/governance.md §2.5](./docs/governance.md#25-linux-kernel-kconfig--depends--select--default-semantics)
++ [docs/version-yaml-spec.md §3](./docs/version-yaml-spec.md#3-patchesfeaturesyamlopenwrt-configin-style--v50-single-source).
 
 ### 2.6 Standalone feature apply (Buildroot-style)
 
