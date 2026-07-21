@@ -1,5 +1,8 @@
 # Redis 网络优化特性
 
+> 当前设计版本:`features.yaml + depends DFS + upstream_status 单值`,schema 见 [docs/schemas.md](./docs/schemas.md)
+> 完整变更历史走 `git log --oneline`
+
 ## 项目品牌名称
 
 Kunpeng BoostKit Redis
@@ -40,7 +43,8 @@ boostkit-patches-governance-demo/
 │   └── apply_patch.sh                   # ★ Buildroot 风格 series 应用器 + v5.0 --features 模式(inline compose)
 ├── docs/
 │   ├── governance.md                    # ★ 设计原理 + 5 家业界出处
-│   ├── version-yaml-spec.md             # ★ 字段权威定义
+│   ├── schemas.md                       # ★ 三类 YAML/header 字段权威定义
+│   ├── version-yaml-spec.md             # 详细字段说明(以 schemas.md 为准)
 │   └── (产品指南 zh/en 保留)
 └── versions/
     └── <upstream-id>/                   # 例如 redis-7.0.15
@@ -213,9 +217,9 @@ make distclean && make -j$(nproc) -DHAVE_KRAIO
 ## 出处与规范
 
 - **设计原理 + 业界对齐**:[docs/governance.md](./docs/governance.md)
-- **字段权威定义**:[docs/version-yaml-spec.md](./docs/version-yaml-spec.md)
+- **字段权威定义**:[docs/schemas.md](./docs/schemas.md)
+- **详细字段说明**:[docs/version-yaml-spec.md](./docs/version-yaml-spec.md)(以 schemas.md 为准)
 - **工具脚本 → 业界出处对照表**:[docs/governance.md §2.7](./docs/governance.md#27-tools-工具脚本--业界出处对照表)
-- **业界对齐速查表(schema + 工具)**:[docs/version-yaml-spec.md §7](./docs/version-yaml-spec.md#7-与业界对齐速查)
 - **操作步骤(新增/废弃 patch 等)**:[docs/governance.md §4](./docs/governance.md#4-常见操作)
 
 业界出处(5 家,v5.1 起纯 5 家已简并):
@@ -247,44 +251,3 @@ make distclean && make -j$(nproc) -DHAVE_KRAIO
 - 上游 Redis:BSD-3-Clause(各 patch 头部保留原始 license)
 - 产品文档:CC-BY 4.0(见 [docs/LICENSE](./docs/LICENSE))
 
-## 变更通知
-
-- **2026-07-21** v5.3.1:`upstream_status_summary`(8 键 dict)→ 单值 `upstream_status: <state>`。
-  v5.3 那个 8 状态块是 dashboard 自创、无 Yocto 业界背书,改为单值符合 Yocto recipe
-  `Upstream-Status` 字段语义(单值枚举)。`lint_series.py` schema 校验同步从 dict 改为单值枚举
-  校验(Yocto 8 状态之一)。`lint_patch_headers.py` 里 Yocto 8 状态枚举校验保留(那里是真源头)。
-  `depends` 字段端到端连通保留(DFS 解析+环依赖 hard-fail)。
-- **2026-07-21** v5.3:`upstream_status_summary` 对齐 Yocto/OpenEmbedded **8 状态全集**
-  (Pending / Submitted / Accepted / Rejected / Backport / Denied / Inappropriate /
-  Inactive-Upstream),dashboard 用稳定 shape(8 个 key 全列,缺位 0)。`lint_series.py`
-  强制 schema:key 必须是这 8 状态之一,值非负整数(非法 key 会被 grep 列表给出)。**`depends`
-  字段端到端连通**:`apply_patch.sh` python inline DFS 解析+环依赖 hard-fail,`lint_series.py`
-  引用存在性+无环校验;`ACTIVE_FEATURES=C` 且 `C.depends=[B]` `B.depends=[A]` 时按 A→B→C 顺序 apply。
-- **2026-07-21** v5.2:feature 目录从抽象字母命名(`feature-A` / `feature-B` / `feature-C`)
-  改为业界 kebab-case 描述名(`kunpeng-hw-accel` / `jemalloc-arm64` / `rdb-aof-fallback`),
-  对齐 OpenWrt `package/network/services/dnsmasq/`、Buildroot `package/redis/`、
-  Yocto `recipes-core/redis/` 等业界命名惯例。`features.yaml` key + 全文档 +
-  `apply_patch.sh` 用法示例同步更新。
-- **2026-07-21** v5.1:删除 `tools/gen_inventory.py` + `inventory.json` 派生体系
-  (用户反馈:gitignored 派生 + CI 上 `--check` 是同义反复,价值有限)。`tools/`
-  减为 2 个脚本;CI 减为 3 步;`.gitignore` 移除 inventory.json 行。
-  **业界出处从 5+1 简化为纯 5 家**(Yocto / DEP-3 / Buildroot / OpenWrt / Kconfig)。
-- **2026-07-21** v5.0:升级到 OpenWrt Config.in 风格的 **feature + combo** 模型。
-  `patches/features.yaml` 集中声明 feature(`title`/`patches`/`depends`/`default`),
-  patch 物理按 `features/<feature>/` 分目录;**compose 逻辑集成到 `apply_patch.sh`
-  内部**(inline python heredoc,**不增加新脚本**)。客户用 `ACTIVE_FEATURES="f1 f2"`
-  或 `--active "f1 f2"` 选特性组合;`depends` 字段让 feature 自动 include 依赖项
-  并先 apply。`lint_series.py` v5.0 起改为 lint `features.yaml`(schema + depends +
-  DEP-3 必填)。删 v4.0 的 `series`/`series.<profile>` 系列文件。
-- **2026-07-20** v4.0:新增 `tools/gen_inventory.py`(Buildroot/OpenWrt 风格派生
-  inventory.json)+ `series.<profile>` profile 系列文件。inventory.json 入
-  `.gitignore`,由 `tools/verify.sh` 自动重生成;CI 加第 4 步
-  (`gen_inventory.py --check`)。`lint_series.py` 自动识别 `series.<profile>`。
-- **2026-07-20** v3.0:集合 Yocto recipe 字段 + DEP-3 patch 头 + Buildroot
-  `apply-patches.sh`。新增 `tools/apply_patch.sh`(单点 series 应用器),
-  `upstream.yaml` 加 Yocto 字段(SUMMARY/LICENSE/HOMEPAGE/LIC_FILES_CHKSUM/
-  SECTION),patch 头换 DEP-3 6 必填(Description/Origin/Upstream-Status/
-  Applies-To/Maintainer/Last-Update)。
-- **2026-07-20** v2.0 重构:精简到 `version-centric + patches/series` 模型,
-  删除 `sync-manifest.py` / `whitelist-audit.py` / `build-perf.sh` / 派生 manifest 文件;
-  patch 元数据迁到邮件式头;对齐 SUSE / Yocto / OpenWrt 等业界方案。

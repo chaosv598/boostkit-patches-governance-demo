@@ -36,7 +36,7 @@ Kconfig 风格的 feature + combo 模型,compose 逻辑集成到 `apply_patch.sh
 - **不引入 DAG** — `depends` 解析为线性顺序(被依赖的先 apply)
 - **无派生 json**(v5.1 起) — 单一真相就是 features.yaml + patch 头,不维护 inventory.json
 
-完整字段定义见 [version-yaml-spec.md](./version-yaml-spec.md)。
+完整字段定义见 [schemas.md](./schemas.md)(权威)+ [version-yaml-spec.md](./version-yaml-spec.md)(详细)。
 
 ---
 

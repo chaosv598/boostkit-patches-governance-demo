@@ -1,6 +1,7 @@
 # version-yaml 字段规范
 
-> 权威定义 `versions/<upstream-id>/` 下文件的字段语义和约束。
+> 本文件是 `versions/<upstream-id>/` 下文件的详细字段说明;**权威定义以 [schemas.md](./schemas.md) 为准**,本文档与之冲突时以 schemas.md 为准。
+> 本规范**集合 Yocto / DEP-3 / Buildroot-OpenWrt / Kconfig 五家之长**:
 > 本规范**集合 Yocto / DEP-3 / Buildroot-OpenWrt / Kconfig 五家之长**:
 > - **`upstream.yaml` 字段名 = Yocto/OpenEmbedded recipe 同款**
 >   ([SUMMARY / LICENSE / LIC_FILES_CHKSUM / HOMEPAGE / SECTION](https://docs.yoctoproject.org/ref-manual/variables.html))
