@@ -208,6 +208,8 @@ make distclean && make -j$(nproc) -DHAVE_KRAIO
 
 - **Design + industry alignment**: [docs/governance.md](./docs/governance.md)
 - **Field definitions**: [docs/version-yaml-spec.md](./docs/version-yaml-spec.md)
+- **Tooling → industry reference mapping**: [docs/governance.md §2.7](./docs/governance.md#27-tools-工具脚本--业界出处对照表)
+- **Industry alignment quick reference (schema + tooling)**: [docs/version-yaml-spec.md §7](./docs/version-yaml-spec.md#7-与业界对齐速查)
 - **Operations (add/retire patch)**: [docs/governance.md §4](./docs/governance.md#4-common-operations)
 
 Industry references (5-way alignment + 1 repo extension):

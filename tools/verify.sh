@@ -1,11 +1,31 @@
 #!/usr/bin/env bash
-# verify —— patch overlay 仓一键验证
+# verify —— patch overlay 仓一键验证(PR / 合并前的 gate)
 #
 # 检查 3 件事(其他职责移到 .github/ lint 脚本):
+#
 #   1. 仓根禁放检查(防误提交 upstream 源码/Dockerfile/Makefile 等)
+#      业界出处:
+#        - Buildroot support/scripts/check-package —— 强制 package/<name>/ 目录结构
+#          https://buildroot.org/downloads/manual/manual.html#_infrastructure_for_packages
+#        - OpenWrt scripts/feeds —— feed 树结构校验
+#          https://github.com/openWRT/openwrt/tree/main/scripts/feeds
+#        - Linux kernel scripts/checkpatch.pl —— 树结构 + patch 合规性
+#          https://github.com/torvalds/linux/blob/master/scripts/checkpatch.pl
+#
 #   2. versions/<v>/upstream.yaml schema(Yocto recipe 字段 + 上游 pin 校验)
+#      业界出处:
+#        - Yocto/OpenEmbedded recipe 字段(SUMMARY/LICENSE/HOMEPAGE/LIC_FILES_CHKSUM/SECTION)
+#          https://docs.yoctoproject.org/ref-manual/variables.html
+#        - Git 40-char SHA-1 校验(Software Heritage / git 自身实践)
+#          https://git-scm.com/docs/githashes
+#
 #   3. 干净 upstream apply:委托给 tools/apply_patch.sh
-#      (Buildroot/OpenWrt 风格的 series 应用器 + v5.0 --features mode)
+#      业界出处:(详见 apply_patch.sh 头部注释)
+#        - Buildroot apply-patches.sh 单点 series 应用器
+#        - OpenWrt Config.in + Makefile 特性声明 + 条件 PATCHFILES
+#        - Linux kernel Kconfig depends/select/default 语义
+#        - Yocto/OpenEmbedded 条件 SRC_URI
+#        - DEP-3 patch 邮件式头 schema
 #
 # 用法: bash tools/verify.sh
 # 环境变量:

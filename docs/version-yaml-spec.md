@@ -400,6 +400,8 @@ bash tools/apply_patch.sh \
 
 ## 7. 与业界对齐速查
 
+### 7.1 文件 schema / 字段对齐
+
 | 概念 | 业界出处 | URL |
 |---|---|---|
 | `SUMMARY`/`LICENSE`/`LIC_FILES_CHKSUM`/`HOMEPAGE`/`SECTION` | **Yocto/OpenEmbedded recipe 字段** | https://docs.yoctoproject.org/ref-manual/variables.html |
@@ -409,7 +411,23 @@ bash tools/apply_patch.sh \
 | `features.yaml` `bool` 选项 + `depends` + `default` | **OpenWrt Config.in** | https://github.com/openWRT/openwrt/tree/main/package |
 | `depends` 深度优先解析 + 环依赖检测 | **Linux kernel Kconfig** | https://www.kernel.org/doc/Documentation/kbuild/kconfig-language.rst |
 | 条件 SRC_URI(`${@bb.utils.contains(...)}`) | **Yocto** `.bbappend` | https://docs.yoctoproject.org/bitbake-style-guide/ |
-| `apply_patch.sh` 单点实现 + `git apply` | **Buildroot** `apply-patches.sh` | https://github.com/buildroot/buildroot/blob/master/support/scripts/apply-patches.sh |
+| 40-char SHA-1 commit pin | **git** / **Software Heritage** | https://git-scm.com/docs/githashes |
+
+### 7.2 工具脚本对齐
+
+| 工具 / 步骤 | 业界出处 | URL |
+|---|---|---|
+| `tools/apply_patch.sh` 单点 series 应用器(line walking + `git apply`) | **Buildroot** `apply-patches.sh` | https://github.com/buildroot/buildroot/blob/master/support/scripts/apply-patches.sh |
+| `apply_patch.sh` line walking 模式 | **OpenWrt** `patch-kernel.sh` | https://github.com/openWRT/openwrt/tree/main/scripts |
+| `apply_patch.sh --features` inline compose | **OpenWrt Config.in** + **Linux kernel Kconfig** | (见 §7.1) |
+| `apply_patch.sh --active` 条件选择 | **OpenWrt** Makefile 条件 PATCHFILES + **Yocto** `bb.utils.contains` | (见 §7.1) |
+| `tools/verify.sh` step 1:仓根禁放检查 | **Buildroot** `check-package` + **OpenWrt** `scripts/feeds` + **Linux kernel** `scripts/checkpatch.pl` | https://buildroot.org/downloads/manual/manual.html#_infrastructure_for_packages · https://github.com/openWRT/openwrt/tree/main/scripts/feeds · https://github.com/torvalds/linux/blob/master/scripts/checkpatch.pl |
+| `tools/verify.sh` step 2:`upstream.yaml` schema 校验 | **Yocto** recipe 字段 + **git** 40-char SHA | (见 §7.1) |
+| `tools/verify.sh` step 3:clean apply 委托 | 同 `apply_patch.sh` 各出处 | (见 §7.2 上方) |
+| `.github/lint_patch_headers.py` patch 头 6 必填 + 条件必填 | **DEP-3** + **Yocto** `Upstream-Status` | https://dep-team.pages.debian.net/deps/dep3/ · https://docs.yoctoproject.org/dev/contributor-guide/recipe-style-guide.html |
+| `.github/lint_series.py` features.yaml schema + depends + 环检测 | **OpenWrt Config.in** + **Linux kernel Kconfig** | (见 §7.1) |
+
+> **完整对照表 + 每步实现要点**见 [docs/governance.md §2.7](./governance.md#27-tools-工具脚本--业界出处对照表)。
 
 > **历史参考**(v5.0 不再使用,仅作背景):Quilt `debian/patches/series` /
 > SUSE `series.conf` SHA-256 校验 / v4.0 `series.<profile>` profile 文件。

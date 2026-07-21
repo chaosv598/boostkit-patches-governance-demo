@@ -210,6 +210,8 @@ make distclean && make -j$(nproc) -DHAVE_KRAIO
 
 - **设计原理 + 业界对齐**:[docs/governance.md](./docs/governance.md)
 - **字段权威定义**:[docs/version-yaml-spec.md](./docs/version-yaml-spec.md)
+- **工具脚本 → 业界出处对照表**:[docs/governance.md §2.7](./docs/governance.md#27-tools-工具脚本--业界出处对照表)
+- **业界对齐速查表(schema + 工具)**:[docs/version-yaml-spec.md §7](./docs/version-yaml-spec.md#7-与业界对齐速查)
 - **操作步骤(新增/废弃 patch 等)**:[docs/governance.md §4](./docs/governance.md#4-常见操作)
 
 业界出处(5 家 + 1 项本仓扩展):

@@ -6,7 +6,8 @@
 # 参考(业界 5 家,详见 docs/governance.md §2):
 #   - Buildroot: support/scripts/apply-patches.sh
 #     https://github.com/buildroot/buildroot/blob/master/support/scripts/apply-patches.sh
-#     单点 series 应用器架构(本仓对应工具 = apply_patch.sh)
+#     单点 series 应用器架构(line 读 + skip 空行/注释 + 行内 guards -pN/-R 透传
+#     + git apply 调用),本仓直接复用架构
 #   - OpenWrt:   package/<name>/{Config.in,Makefile}
 #     https://github.com/openWRT/openwrt/tree/main/package
 #     Config.in:bool 选项 + depends + default —— 对应本仓 features.yaml
@@ -18,7 +19,8 @@
 #     ${@bb.utils.contains('DISTRO_FEATURES', 'x', 'y', '', d)} —— 对应 ACTIVE_FEATURES
 #   - DEP-3:     patch 邮件式头 schema
 #     https://dep-team.pages.debian.net/deps/dep3/
-#     每个 .patch 文件头 6 必填字段
+#     每个 .patch 文件头 6 必填字段(由 .github/lint_patch_headers.py 校验,
+#     不在 apply_patch.sh 内部)
 #
 # 注:本仓 v5.0 起已删除 patches/series 文件 + series.<profile>,统一改用 features.yaml。
 #     v5.1 起已删除 tools/gen_inventory.py(用户反馈:gitignored 派生体系价值有限)。
