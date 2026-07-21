@@ -14,8 +14,7 @@ patches on top.
 schemes — **Yocto/OpenEmbedded** recipe fields + `Upstream-Status`, **DEP-3** patch header
 schema, **Buildroot** `apply-patches.sh`, **OpenWrt** `package/<name>/Config.in` +
 `Makefile` feature declaration (v5.0 primary), **Linux kernel** `Kconfig` `depends` /
-`select` / `default` semantics; plus `tools/gen_inventory.py` (Buildroot `pkg-stats` /
-OpenWrt `metadata.pl` style).
+`select` / `default` semantics.
 
 **v5.0 key upgrade**: `patches/features.yaml` (OpenWrt Config.in style) replaces v4.0's
 `series.<profile>`; customers pick feature combos via `ACTIVE_FEATURES`. Compose logic
@@ -34,12 +33,11 @@ boostkit-patches-governance-demo/
 │   ├── lint_patch_headers.py            # DEP-3 6 required fields validator
 │   ├── lint_series.py                   # v5.0: lints features.yaml (schema + depends + DEP-3 required)
 │   └── workflows/
-│       ├── ci.yml                       # 4 steps: verify + patch header lint + features lint + inventory check
+│       ├── ci.yml                       # 3 steps: verify + patch header lint + features lint
 │       └── build-perf.yml               # skeleton workflow (matrix: clean apply + echo steps)
 ├── tools/
-│   ├── verify.sh                        # root hygiene + upstream.yaml schema (delegates apply --features) + inventory refresh
-│   ├── apply_patch.sh                   # ★ Buildroot-style series applier + v5.0 --features mode (inline compose)
-│   └── gen_inventory.py                 # inventory.json generator (Buildroot/OpenWrt style)
+│   ├── verify.sh                        # root hygiene + upstream.yaml schema (delegates apply --features)
+│   └── apply_patch.sh                   # ★ Buildroot-style series applier + v5.0 --features mode (inline compose)
 ├── docs/
 │   ├── governance.md                    # ★ Design rationale + 5 industry references
 │   ├── version-yaml-spec.md             # ★ Authoritative field definitions
@@ -49,9 +47,8 @@ boostkit-patches-governance-demo/
         ├── upstream.yaml                # Yocto recipe fields + upstream pin + governance
         └── patches/
             ├── features.yaml            # ★ Feature declaration (OpenWrt Config.in style, single source)
-            ├── features/<feature>/      # one feature per directory
-            │   └── *.patch              # DEP-3 mail-style header (6 required) + diff
-            └── inventory.json           # derived (gitignored)
+            └── features/<feature>/      # one feature per directory
+                └── *.patch              # DEP-3 mail-style header (6 required) + diff
 ```
 
 ## Quick Start
@@ -127,7 +124,7 @@ versions/redis-7.0.15/patches/features/
 ### 2. Local validation
 
 ```bash
-# 1. Root hygiene + upstream.yaml schema + clean clone + apply features.yaml + inventory refresh
+# 1. Root hygiene + upstream.yaml schema + clean clone + apply features.yaml
 #    (delegates to tools/apply_patch.sh --features internally)
 bash tools/verify.sh
 
@@ -136,9 +133,6 @@ python3 .github/lint_patch_headers.py versions/*/patches/
 
 # 3. features.yaml schema + depends resolution + DEP-3 required fields
 python3 .github/lint_series.py versions/*/patches/
-
-# 4. inventory.json matches patch headers + features.yaml (ignores generated_at timestamp)
-python3 tools/gen_inventory.py --check versions/*/
 ```
 
 ### 2.5 Feature combos (subsets on the same upstream)
@@ -223,11 +217,15 @@ Industry references (5-way alignment + 1 repo extension):
 - **Buildroot** `apply-patches.sh` — series applier single source
 - **OpenWrt** `package/<name>/Config.in` + `Makefile` — feature declaration + conditional `PATCHFILES` (v5.0 primary)
 - **Linux kernel** `Kconfig` — `depends` / `select` / `default` semantics (depth-first resolution + cycle detection)
-- **Repo extension** — `tools/gen_inventory.py` derived inventory.json (Buildroot `pkg-stats` / OpenWrt `metadata.pl`)
 
 **v5.0 key upgrade**: `patches/features.yaml` (OpenWrt Config.in style) replaces v4.0's
 `series.<profile>`; customers pick feature combos via `ACTIVE_FEATURES`. Compose logic
 is **integrated into `apply_patch.sh` internally** (no new script).
+
+**v5.1 simplification**: removed `tools/gen_inventory.py` + `inventory.json` derived
+pipeline (gitignored + CI `--check` is a tautology, low value). `tools/` reduced to 2
+scripts; CI to 3 steps; `.gitignore` loses the inventory.json entry. Industry references
+simplified to pure 5 (Yocto / DEP-3 / Buildroot / OpenWrt / Kconfig).
 
 ## Contributing
 
@@ -235,8 +233,8 @@ PR-only workflow. No direct pushes to master.
 
 1. Add patch → place under `patches/features/<feature>/` + write DEP-3 header (6 required) +
    add entry to `features.yaml`
-2. Run all 4 local tools, all green
-3. Open PR → triggers `ci.yml` 4 steps + `build-perf.yml` matrix (skeleton)
+2. Run all 3 local tools, all green
+3. Open PR → triggers `ci.yml` 3 steps + `build-perf.yml` matrix (skeleton)
 4. Maintainer review → merge
 
 ## License
@@ -247,15 +245,18 @@ PR-only workflow. No direct pushes to master.
 
 ## Change Log
 
+- **2026-07-21** v5.1: remove `tools/gen_inventory.py` + `inventory.json` derived
+  pipeline (user feedback: gitignored + CI `--check` is a tautology, low value).
+  `tools/` reduced to 2 scripts; CI to 3 steps; `.gitignore` loses the inventory.json
+  entry. Industry references simplified to pure 5 (Yocto / DEP-3 / Buildroot / OpenWrt / Kconfig).
 - **2026-07-21** v5.0: upgrade to OpenWrt Config.in-style **feature + combo** model.
   `patches/features.yaml` centrally declares features (`title`/`patches`/`depends`/
   `default`); patches are physically organized by `features/<feature>/`. **Compose
   logic integrated into `apply_patch.sh` internally** (inline python heredoc,
   **no new script**). Customers pick feature combos via `ACTIVE_FEATURES="f1 f2"`
   or `--active "f1 f2"`; `depends` field auto-includes dependencies and applies
-  them first. inventory.json gains `features`/`combos` sections. `lint_series.py`
-  now lints `features.yaml` (schema + depends + DEP-3 required). v4.0's
-  `series`/`series.<profile>` files are removed.
+  them first. `lint_series.py` now lints `features.yaml` (schema + depends + DEP-3
+  required). v4.0's `series`/`series.<profile>` files are removed.
 - **2026-07-20** v4.0: add `tools/gen_inventory.py` (Buildroot/OpenWrt-style derived
   inventory.json) and `series.<profile>` profile files. inventory.json is gitignored
   and regenerated by `tools/verify.sh`. CI gains step 4 (`gen_inventory.py --check`).

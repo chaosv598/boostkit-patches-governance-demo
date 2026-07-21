@@ -3,7 +3,7 @@
 #                   + OpenWrt Config.in / Linux kernel Kconfig / Yocto 条件 SRC_URI
 #                   风格的 feature+combo compose (v5.0)
 #
-# 参考(业界 5 家 + 1 项本仓扩展,详见 docs/governance.md §2):
+# 参考(业界 5 家,详见 docs/governance.md §2):
 #   - Buildroot: support/scripts/apply-patches.sh
 #     https://github.com/buildroot/buildroot/blob/master/support/scripts/apply-patches.sh
 #     单点 series 应用器架构(本仓对应工具 = apply_patch.sh)
@@ -19,11 +19,11 @@
 #   - DEP-3:     patch 邮件式头 schema
 #     https://dep-team.pages.debian.net/deps/dep3/
 #     每个 .patch 文件头 6 必填字段
-#   - 本仓扩展:  tools/gen_inventory.py 派生 inventory.json
 #
 # 注:本仓 v5.0 起已删除 patches/series 文件 + series.<profile>,统一改用 features.yaml。
+#     v5.1 起已删除 tools/gen_inventory.py(用户反馈:gitignored 派生体系价值有限)。
 #     Quilt / Debian `debian/patches/series` / SUSE `series.conf` 仅作历史背景参考,
-#     不在 v5.0 实际引用范围内(详见 docs/governance.md §2)。
+#     不在 v5.0+ 实际引用范围内(详见 docs/governance.md §2)。
 #
 # 用法 (两种模式):
 #

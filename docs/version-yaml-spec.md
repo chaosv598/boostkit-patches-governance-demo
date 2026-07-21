@@ -26,15 +26,14 @@ versions/<upstream-id>/
     ├── features.yaml        # ★ feature 声明(OpenWrt Config.in 风格;单一权威)
     ├── features/<feature>/  # 一特性一目录
     │   └── *.patch          # 该特性下的 patch(DEP-3 邮件式头 + diff)
-    └── inventory.json       # 派生(不入仓,见 §6)
+
 ```
 
 `<upstream-id>` 命名约定:`<project>-<version>`,例如 `redis-7.0.15`。
 
 **配套工具**(仓根 `tools/`):
 - `tools/apply_patch.sh` — Buildroot 风格 series 应用器(单点实现,接受任意 series 文件)
-- `tools/gen_inventory.py` — 派生 `inventory.json`(Buildroot/OpenWrt 风格)
-- `tools/verify.sh` — 一键验证(仓根禁放 + upstream.yaml schema + 委托 apply_patch.sh + inventory 派生刷新)
+- `tools/verify.sh` — 一键验证(仓根禁放 + upstream.yaml schema + 委托 apply_patch.sh)
 
 ---
 
@@ -180,7 +179,7 @@ patches/
 │   │   └── 0001-perf-jemalloc-arm64-pointer-tag-and-gc.patch
 │   └── feature-C/
 │       └── 0001-perf-rdb-fallback-aof.patch
-└── inventory.json                # 派生(不入仓)
+
 ```
 
 每个 feature 下 patch 文件名 `0001-` 仅辅助阅读/检索,顺序由 `patches.yaml`
@@ -398,80 +397,6 @@ bash tools/apply_patch.sh \
 
 ---
 
-## 6. `tools/gen_inventory.py`(Buildroot/OpenWrt 风格派生)
-
-为解决"系列里每一 patch 是什么状态 / 属于哪个 profile"这类查询需求,本仓引入
-**派生物 `versions/<v>/patches/inventory.json`**,由 `tools/gen_inventory.py`
-从 patch 邮件式头 + series 文件**全自动派生**。
-
-### 6.1 设计原则
-
-- **派生 = 非源**:inventory.json **不入仓**(`.gitignore` 已在 v4.0 加),
-  单一真相仍是 patch 头 + series 文件
-- **用途**:dashboard / 报告 / 一键查"这个版本有哪些 patch,什么状态,属于哪些 profile"
-- **业界出处**:
-  - Buildroot `support/scripts/pkg-stats`(从 package 元数据派生统计)
-  - OpenWrt `scripts/metadata.pl`(扫 Makefile 提取 package 信息)
-  - Debian `dpkg-scanpackages`(从 `.dsc` 派生 `Packages` 文件)
-
-### 6.2 用法
-
-```bash
-# 写 inventory.json(每次 verify.sh 自动调)
-python3 tools/gen_inventory.py versions/*/
-
-# CI:仅检查是否新鲜,与业务字段一致(忽略 generated_at 时间戳差异)
-python3 tools/gen_inventory.py --check versions/*/
-```
-
-### 6.3 输出 schema(精简版)
-
-```json
-{
-  "version_id": "redis-7.0.15",
-  "upstream": {"repo": "...", "version": "...", "commit": "..."},
-  "generated_at": "2026-07-20T...",
-  "generator": "tools/gen_inventory.py",
-  "patches": [
-    {
-      "file": "0001-hw-kunpeng-adapt-iouring.patch",
-      "upstream_status": "Submitted",
-      "maintainer": "twwang <twwang@boostkit>",
-      "last_update": "2026-07-20",
-      "applies_to": "redis 7.0.15",
-      "subject": "...",
-      "description_first_line": "...",
-      "in_series_default": true,
-      "in_profiles": ["default", "minimal"]
-    }
-  ],
-  "profiles": {
-    "default":  {"file": "patches/series",          "patch_count": 4},
-    "minimal":  {"file": "patches/series.minimal",  "patch_count": 2},
-    "security": {"file": "patches/series.security", "patch_count": 1}
-  },
-  "stats": {
-    "total_patches": 4,
-    "by_upstream_status": {"Submitted": 3, "Inappropriate": 1},
-    "orphans": [],
-    "missing_from_series": []
-  }
-}
-```
-
-### 6.4 字段语义
-
-| 字段 | 来源 | 用途 |
-|---|---|---|
-| `patches[].file` | `patches/*.patch` glob | patch 文件名(glob 排序) |
-| `patches[].upstream_status` | patch 头 `Upstream-Status:` | 状态聚合 |
-| `patches[].in_series_default` | 主 series 是否引用 | 孤儿检查 |
-| `patches[].in_profiles` | 所有 series / series.* 引用 | profile 矩阵 |
-| `profiles.<name>.patch_count` | series / series.* 行数 | profile 概要 |
-| `stats.by_upstream_status` | 聚合 | dashboard 卡片 |
-| `stats.orphans` | 在 `patches/` 但不在主 `series` | 主 series 完整性 |
-
----
 
 ## 7. 与业界对齐速查
 
@@ -485,7 +410,6 @@ python3 tools/gen_inventory.py --check versions/*/
 | `depends` 深度优先解析 + 环依赖检测 | **Linux kernel Kconfig** | https://www.kernel.org/doc/Documentation/kbuild/kconfig-language.rst |
 | 条件 SRC_URI(`${@bb.utils.contains(...)}`) | **Yocto** `.bbappend` | https://docs.yoctoproject.org/bitbake-style-guide/ |
 | `apply_patch.sh` 单点实现 + `git apply` | **Buildroot** `apply-patches.sh` | https://github.com/buildroot/buildroot/blob/master/support/scripts/apply-patches.sh |
-| `inventory.json` 派生物(单跑 + check) | Buildroot `pkg-stats` + OpenWrt `metadata.pl` | (本仓扩展) |
 
 > **历史参考**(v5.0 不再使用,仅作背景):Quilt `debian/patches/series` /
 > SUSE `series.conf` SHA-256 校验 / v4.0 `series.<profile>` profile 文件。
@@ -497,11 +421,12 @@ python3 tools/gen_inventory.py --check versions/*/
 
 | 字段/工具 | 添加版本 | 替代方案 |
 |---|---|---|
+| `tools/gen_inventory.py` + `inventory.json` 派生体系整体移除 | **v5.1** | 替代 v5.0 `gen_inventory.py --check`(gitignored 派生 + CI 同义反复,价值有限) |
 | `patches/features.yaml` feature+combo 模型(OpenWrt Config.in + Kconfig) | **v5.0** | 替代 v4.0 `series.<profile>`(v5.0 已删除 series 文件) |
 | `apply_patch.sh --features` inline compose(无新脚本) | **v5.0** | 替代 v4.0 series 文件模式(仍兼容 legacy series 文件) |
-| `inventory.json` `features`/`combos` 段 | **v5.0** | v4.0 inventory 仅含 patches 段 |
+| ~~`inventory.json` `features`/`combos` 段~~ | ~~v5.0~~ | **v5.1 已删除**(gen_inventory.py + inventory.json 派生体系整体移除) |
 | `lint_series.py` lint features.yaml | **v5.0** | v4.0 lint series 一致性(已删) |
-| `tools/gen_inventory.py` + `inventory.json` 派生 | v4.0 | (新增) |
+| ~~`tools/gen_inventory.py` + `inventory.json` 派生~~ | ~~v4.0~~ | **v5.1 已删除**(gitignored 派生体系价值有限) |
 | `series.<profile>` profile 系列文件 | v4.0 | **v5.0 已删除**(由 `features.yaml` 替代) |
 | `patches/series` 显式系列文件 | v2.0 | **v5.0 已删除**(由 `features.yaml` + compose 替代;仍兼容 legacy 调用) |
 | `upstream.yaml` Yocto 段(SUMMARY/LICENSE/HOMEPAGE) | v3.0 | 旧 `version.yaml` 无 recipe 段 |

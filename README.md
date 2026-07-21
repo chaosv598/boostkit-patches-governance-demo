@@ -15,7 +15,6 @@ BoostKit 团队维护的 ARM/Kunpeng 平台优化 patch。
 - **Buildroot** `apply-patches.sh` 单点 series 应用器
 - **OpenWrt** `package/<name>/Config.in` + `Makefile` 特性声明 + 条件 `PATCHFILES`(本仓 v5.0 主线)
 - **Linux kernel** `Kconfig` `depends` / `select` / `default` 语义
-- **本仓扩展**:`tools/gen_inventory.py` 派生 `inventory.json`(Buildroot/OpenWrt 风格)
 
 **v5.0 关键升级**:用 `patches/features.yaml`(OpenWrt Config.in 风格)替代 v4.0
 的 `series.<profile>`,客户用 `ACTIVE_FEATURES` 选特性组合;compose 逻辑
@@ -34,12 +33,11 @@ boostkit-patches-governance-demo/
 │   ├── lint_patch_headers.py            # DEP-3 6 必填字段校验
 │   ├── lint_series.py                   # v5.0 起 lint features.yaml(schema + depends + DEP-3 必填)
 │   └── workflows/
-│       ├── ci.yml                       # 4 步:verify + patch 头 lint + features lint + inventory check
+│       ├── ci.yml                       # 3 步:verify + patch 头 lint + features lint
 │       └── build-perf.yml               # 骨架演示 workflow(matrix + clean apply 真跑 + 后续 echo)
 ├── tools/
-│   ├── verify.sh                        # 仓根禁放 + upstream.yaml schema(委托 apply_patch.sh --features)+ 派生 inventory
-│   ├── apply_patch.sh                   # ★ Buildroot 风格 series 应用器 + v5.0 --features 模式(inline compose)
-│   └── gen_inventory.py                 # 派生 inventory.json(Buildroot/OpenWrt 风格)
+│   ├── verify.sh                        # 仓根禁放 + upstream.yaml schema(委托 apply_patch.sh --features)
+│   └── apply_patch.sh                   # ★ Buildroot 风格 series 应用器 + v5.0 --features 模式(inline compose)
 ├── docs/
 │   ├── governance.md                    # ★ 设计原理 + 5 家业界出处
 │   ├── version-yaml-spec.md             # ★ 字段权威定义
@@ -49,9 +47,8 @@ boostkit-patches-governance-demo/
         ├── upstream.yaml                # Yocto recipe 字段 + upstream pin + 治理归属
         └── patches/
             ├── features.yaml            # ★ feature 声明(OpenWrt Config.in 风格,单一权威)
-            ├── features/<feature>/      # 一特性一目录
-            │   └── *.patch              # DEP-3 邮件式头(6 必填)+ diff
-            └── inventory.json           # 派生(不入仓,gitignore)
+            └── features/<feature>/      # 一特性一目录
+                └── *.patch              # DEP-3 邮件式头(6 必填)+ diff
 ```
 
 ## 快速开始
@@ -127,7 +124,7 @@ versions/redis-7.0.15/patches/features/
 ### 2. 本地验证
 
 ```bash
-# 1. 仓根干净 + upstream.yaml schema + clean clone + 按 features.yaml apply + 派生 inventory
+# 1. 仓根干净 + upstream.yaml schema + clean clone + 按 features.yaml apply
 #    (内部委托给 tools/apply_patch.sh --features,Buildroot 风格 + v5.0 inline compose)
 bash tools/verify.sh
 
@@ -136,9 +133,6 @@ python3 .github/lint_patch_headers.py versions/*/patches/
 
 # 3. features.yaml schema + depends 解析 + DEP-3 必填字段
 python3 .github/lint_series.py versions/*/patches/
-
-# 4. inventory.json 与 patch 头 + features.yaml 一致(忽略 generated_at 时间戳)
-python3 tools/gen_inventory.py --check versions/*/
 ```
 
 ### 2.5 Feature 组合(同一 upstream 多特性组合)
@@ -224,19 +218,21 @@ make distclean && make -j$(nproc) -DHAVE_KRAIO
 - **Buildroot** `apply-patches.sh` — series 应用器单点实现
 - **OpenWrt** `package/<name>/Config.in` + `Makefile` — 特性声明 + 条件 `PATCHFILES`(本仓 v5.0 主线)
 - **Linux kernel** `Kconfig` — `depends` / `select` / `default` 语义(深度优先解析 + 环依赖检测)
-- **本仓扩展** — `tools/gen_inventory.py` 派生 inventory.json(Buildroot `pkg-stats` / OpenWrt `metadata.pl` 同款)
 
 **v5.0 关键升级**:用 `patches/features.yaml`(OpenWrt Config.in 风格)替代 v4.0
 的 `series.<profile>`,客户用 `ACTIVE_FEATURES` 选特性组合;compose 逻辑
 **集成到 `apply_patch.sh` 内部**(用户约束:不另起新脚本)。
+
+**v5.1 简化**:删除 `tools/gen_inventory.py` + `inventory.json` 派生体系
+(gitignored 派生 + CI 同义反复,价值有限)。本地 3 工具全绿即可。
 
 ## 贡献
 
 只接受 PR,不接受直推 master。流程:
 
 1. 新增 patch → 放 `patches/features/<feature>/` + 写 DEP-3 头(6 必填)+ 在 `features.yaml` 加 entry
-2. 跑本地 4 工具全绿(verify 含 inventory 派生 + 3 lint 工具)
-3. 开 PR,触发 `ci.yml` 4 步 + `build-perf.yml` matrix(骨架)
+2. 跑本地 3 工具全绿(verify + 2 个 lint)
+3. 开 PR,触发 `ci.yml` 3 步 + `build-perf.yml` matrix(骨架)
 4. 维护者 review → merge
 
 ## 许可证
@@ -247,14 +243,17 @@ make distclean && make -j$(nproc) -DHAVE_KRAIO
 
 ## 变更通知
 
+- **2026-07-21** v5.1:删除 `tools/gen_inventory.py` + `inventory.json` 派生体系
+  (用户反馈:gitignored 派生 + CI 上 `--check` 是同义反复,价值有限)。`tools/`
+  减为 2 个脚本;CI 减为 3 步;`.gitignore` 移除 inventory.json 行。
+  **业界出处从 5+1 简化为纯 5 家**(Yocto / DEP-3 / Buildroot / OpenWrt / Kconfig)。
 - **2026-07-21** v5.0:升级到 OpenWrt Config.in 风格的 **feature + combo** 模型。
   `patches/features.yaml` 集中声明 feature(`title`/`patches`/`depends`/`default`),
   patch 物理按 `features/<feature>/` 分目录;**compose 逻辑集成到 `apply_patch.sh`
   内部**(inline python heredoc,**不增加新脚本**)。客户用 `ACTIVE_FEATURES="f1 f2"`
   或 `--active "f1 f2"` 选特性组合;`depends` 字段让 feature 自动 include 依赖项
-  并先 apply。inventory.json 新增 `features`/`combos` 段。`lint_series.py` v5.0
-  起改为 lint `features.yaml`(schema + depends + DEP-3 必填)。删 v4.0 的
-  `series`/`series.<profile>` 系列文件。
+  并先 apply。`lint_series.py` v5.0 起改为 lint `features.yaml`(schema + depends +
+  DEP-3 必填)。删 v4.0 的 `series`/`series.<profile>` 系列文件。
 - **2026-07-20** v4.0:新增 `tools/gen_inventory.py`(Buildroot/OpenWrt 风格派生
   inventory.json)+ `series.<profile>` profile 系列文件。inventory.json 入
   `.gitignore`,由 `tools/verify.sh` 自动重生成;CI 加第 4 步

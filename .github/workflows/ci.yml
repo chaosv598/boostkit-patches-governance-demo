@@ -1,10 +1,13 @@
-# Patch overlay CI —— v5.0 模型
+# Patch overlay CI —— v5.0 模型(v5.1 起 3 步)
 #
 # 流程 (按 docs/version-yaml-spec.md + docs/governance.md):
-#   1. tools/verify.sh        —— 仓根禁放 + upstream.yaml schema + clean clone + features.yaml compose + apply + inventory 派生刷新
+#   1. tools/verify.sh        —— 仓根禁放 + upstream.yaml schema + clean clone + features.yaml compose + apply
 #   2. .github/lint_patch_headers.py —— patch 邮件式头 schema 校验
 #   3. .github/lint_series.py —— features.yaml schema + depends 解析 + DEP-3 必填字段(v5.0 替代 v4.0 的 series 一致性)
-#   4. tools/gen_inventory.py --check —— 派生 inventory.json 与 patch 头 + features.yaml 一致
+#
+# v5.1: 删掉原 step 4 (gen_inventory.py --check),原因:gitignored 派生 + CI 上是
+# 同义反复(verify.sh 已写过 inventory.json,check 跟自己再生成一遍比 → 永远相等)。
+# 详情见 docs/governance.md §2.7 → v5.1 已删。
 #
 # 失败策略:
 #   - ci.yml 任何一项 fail = block merge
@@ -52,7 +55,3 @@ jobs:
       # 3. features.yaml schema + patch 头一致性
       - name: Features.yaml + patch headers lint
         run: python3 .github/lint_series.py versions/*/patches/
-
-      # 4. inventory 派生物一致(单跑 check,差异 > 0 即 fail;verify.sh 已经写过一遍)
-      - name: Inventory consistency check
-        run: python3 tools/gen_inventory.py --check versions/*/
