@@ -12,9 +12,10 @@ patches on top.
 
 **Core model**: version-centric + feature declaration. Combined from 5 industry-proven
 schemes — **Yocto/OpenEmbedded** recipe fields + `Upstream-Status`, **DEP-3** patch header
-schema, **Buildroot** `apply-patches.sh`, **OpenWrt** `patches/series` + **`Config.in`
-feature declaration** (v5.0 primary), **Quilt/Debian** series; plus `tools/gen_inventory.py`
-(Buildroot `pkg-stats` / OpenWrt `metadata.pl` style).
+schema, **Buildroot** `apply-patches.sh`, **OpenWrt** `package/<name>/Config.in` +
+`Makefile` feature declaration (v5.0 primary), **Linux kernel** `Kconfig` `depends` /
+`select` / `default` semantics; plus `tools/gen_inventory.py` (Buildroot `pkg-stats` /
+OpenWrt `metadata.pl` style).
 
 **v5.0 key upgrade**: `patches/features.yaml` (OpenWrt Config.in style) replaces v4.0's
 `series.<profile>`; customers pick feature combos via `ACTIVE_FEATURES`. Compose logic
@@ -220,8 +221,8 @@ Industry references (5-way alignment + 1 repo extension):
   `Upstream-Status` 8-state semantics
 - **DEP-3** (Debian) — patch header schema with 6 required fields
 - **Buildroot** `apply-patches.sh` — series applier single source
-- **OpenWrt** `patches/series` line format + **`Config.in` feature declaration** (v5.0 primary)
-- **Quilt/Debian** `debian/patches/series` — top-to-bottom order list
+- **OpenWrt** `package/<name>/Config.in` + `Makefile` — feature declaration + conditional `PATCHFILES` (v5.0 primary)
+- **Linux kernel** `Kconfig` — `depends` / `select` / `default` semantics (depth-first resolution + cycle detection)
 - **Repo extension** — `tools/gen_inventory.py` derived inventory.json (Buildroot `pkg-stats` / OpenWrt `metadata.pl`)
 
 **v5.0 key upgrade**: `patches/features.yaml` (OpenWrt Config.in style) replaces v4.0's
@@ -266,8 +267,8 @@ PR-only workflow. No direct pushes to master.
   Applies-To/Maintainer/Last-Update).
 - **2026-07-20** v2.0 refactor: slim down to `version-centric + patches/series` model.
   Removed `sync-manifest.py` / `whitelist-audit.py` / `build-perf.sh` / generated manifest
-  files. Patch metadata migrated to mail-style headers. Aligned with SUSE / Debian Quilt /
-  Yocto / ungoogled-chromium industry references.
+  files. Patch metadata migrated to mail-style headers. Aligned with SUSE / Yocto /
+  OpenWrt industry references.
 - **2026-03-05** README rework
 - **2025-03-30** added guides + release notes
 - **2025-02-28** initial redis 7.0.15 support

@@ -1,16 +1,29 @@
 #!/bin/bash
-# apply_patch.sh — Buildroot/OpenWrt 风格的 patch series 应用器
-#                   + OpenWrt/Yocto/Kconfig 风格的 feature+combo compose (v5.0)
+# apply_patch.sh — Buildroot 风格的 patch series 应用器
+#                   + OpenWrt Config.in / Linux kernel Kconfig / Yocto 条件 SRC_URI
+#                   风格的 feature+combo compose (v5.0)
 #
-# 参考:
+# 参考(业界 5 家 + 1 项本仓扩展,详见 docs/governance.md §2):
 #   - Buildroot: support/scripts/apply-patches.sh
 #     https://github.com/buildroot/buildroot/blob/master/support/scripts/apply-patches.sh
-#   - OpenWrt:   scripts/patch-kernel.sh + package/<name>/{Config.in,Makefile}
-#     https://github.com/openWRT/openwrt/tree/main/scripts
+#     单点 series 应用器架构(本仓对应工具 = apply_patch.sh)
+#   - OpenWrt:   package/<name>/{Config.in,Makefile}
+#     https://github.com/openWRT/openwrt/tree/main/package
 #     Config.in:bool 选项 + depends + default —— 对应本仓 features.yaml
 #     Makefile:  条件 PATCHFILES                —— 对应本仓 --active
-#   - Yocto:     recipes-*/<pkg>.bbappend 条件 SRC_URI
-#   - Kconfig:   depends / select 语义
+#   - Linux kernel Kconfig: depends / select / default 语义
+#     https://www.kernel.org/doc/Documentation/kbuild/kconfig-language.rst
+#     深度优先 depends 解析 + 环依赖检测 —— 本仓 inline python heredoc 实现
+#   - Yocto/OpenEmbedded: recipes-*/<pkg>.bbappend 条件 SRC_URI
+#     ${@bb.utils.contains('DISTRO_FEATURES', 'x', 'y', '', d)} —— 对应 ACTIVE_FEATURES
+#   - DEP-3:     patch 邮件式头 schema
+#     https://dep-team.pages.debian.net/deps/dep3/
+#     每个 .patch 文件头 6 必填字段
+#   - 本仓扩展:  tools/gen_inventory.py 派生 inventory.json
+#
+# 注:本仓 v5.0 起已删除 patches/series 文件 + series.<profile>,统一改用 features.yaml。
+#     Quilt / Debian `debian/patches/series` / SUSE `series.conf` 仅作历史背景参考,
+#     不在 v5.0 实际引用范围内(详见 docs/governance.md §2)。
 #
 # 用法 (两种模式):
 #

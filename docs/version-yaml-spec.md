@@ -232,10 +232,9 @@ feature-B.depends: [feature-A]
 ### 3.6 业界对齐
 
 - **OpenWrt Config.in** — `bool` 选项 + `depends on` + `default y` ([OpenWrt package](https://github.com/openWRT/openwrt/tree/main/package))
-- **Linux kernel Kconfig** — `depends on` / `select` 语义
+- **Linux kernel Kconfig** — `depends on` / `select` 语义([Kconfig language](https://www.kernel.org/doc/Documentation/kbuild/kconfig-language.rst))
 - **Yocto 条件 SRC_URI** — `${@bb.utils.contains('DISTRO_FEATURES', ...)}`
 - **Buildroot defconfig** — `BR2_PACKAGE_*=y` per package
-- **Quilt topic branches** — per-feature patch stack(本仓不引入,过度设计)
 
 ### 3.7 为什么 1 features.yaml = 1 upstream(而非 per-feature 多 yaml)
 
@@ -482,11 +481,15 @@ python3 tools/gen_inventory.py --check versions/*/
 | `Upstream-Status` 8 状态语义 | Yocto patch metadata | https://docs.yoctoproject.org/dev/contributor-guide/recipe-style-guide.html |
 | `Description` / `Origin` / `Maintainer` / `Last-Update` 必填 | **DEP-3** patch header | https://dep-team.pages.debian.net/deps/dep3/ |
 | `Upstream-Status` + `Whitelist-Reason` | Yocto + Debian DEP-3 | (同上) |
-| `patches/series` 自上而下顺序 | Debian Quilt / ungoogled-chromium | https://salsa.debian.org/kernel-team/linux/-/tree/master/debian/patches |
-| `series.conf` + SHA-256 校验和 | SUSE kernel-source | https://github.com/openSUSE/kernel-source/blob/master/scripts/apply-patches |
-| `apply-patches.sh` 单点实现 | **Buildroot** + **OpenWrt** | https://github.com/buildroot/buildroot/blob/master/support/scripts/apply-patches.sh |
-| `series.<profile>` 子集系列文件 | Buildroot variant + OpenWrt `PATCHFILES` | (本仓扩展) |
-| `inventory.json` 派生物(单跑 + check) | Buildroot `pkg-stats` + OpenWrt `metadata.pl` | (本仓) |
+| `features.yaml` `bool` 选项 + `depends` + `default` | **OpenWrt Config.in** | https://github.com/openWRT/openwrt/tree/main/package |
+| `depends` 深度优先解析 + 环依赖检测 | **Linux kernel Kconfig** | https://www.kernel.org/doc/Documentation/kbuild/kconfig-language.rst |
+| 条件 SRC_URI(`${@bb.utils.contains(...)}`) | **Yocto** `.bbappend` | https://docs.yoctoproject.org/bitbake-style-guide/ |
+| `apply_patch.sh` 单点实现 + `git apply` | **Buildroot** `apply-patches.sh` | https://github.com/buildroot/buildroot/blob/master/support/scripts/apply-patches.sh |
+| `inventory.json` 派生物(单跑 + check) | Buildroot `pkg-stats` + OpenWrt `metadata.pl` | (本仓扩展) |
+
+> **历史参考**(v5.0 不再使用,仅作背景):Quilt `debian/patches/series` /
+> SUSE `series.conf` SHA-256 校验 / v4.0 `series.<profile>` profile 文件。
+> v5.0 起统一改用 `features.yaml` + git commit hash 表达 patch provenance。
 
 ---
 
@@ -494,12 +497,18 @@ python3 tools/gen_inventory.py --check versions/*/
 
 | 字段/工具 | 添加版本 | 替代方案 |
 |---|---|---|
-| `tools/gen_inventory.py` + `inventory.json` 派生 | **v4.0** | (新增) |
-| `series.<profile>` profile 系列文件 | **v4.0** | (新增,本仓扩展) |
+| `patches/features.yaml` feature+combo 模型(OpenWrt Config.in + Kconfig) | **v5.0** | 替代 v4.0 `series.<profile>`(v5.0 已删除 series 文件) |
+| `apply_patch.sh --features` inline compose(无新脚本) | **v5.0** | 替代 v4.0 series 文件模式(仍兼容 legacy series 文件) |
+| `inventory.json` `features`/`combos` 段 | **v5.0** | v4.0 inventory 仅含 patches 段 |
+| `lint_series.py` lint features.yaml | **v5.0** | v4.0 lint series 一致性(已删) |
+| `tools/gen_inventory.py` + `inventory.json` 派生 | v4.0 | (新增) |
+| `series.<profile>` profile 系列文件 | v4.0 | **v5.0 已删除**(由 `features.yaml` 替代) |
+| `patches/series` 显式系列文件 | v2.0 | **v5.0 已删除**(由 `features.yaml` + compose 替代;仍兼容 legacy 调用) |
 | `upstream.yaml` Yocto 段(SUMMARY/LICENSE/HOMEPAGE) | v3.0 | 旧 `version.yaml` 无 recipe 段 |
 | patch 头 DEP-3 6 必填 | v3.0 | 旧 4 必填(From/Subject/Upstream-Status/Signed-off-by) |
 | `tools/apply_patch.sh` | v3.0 | 旧 verify.sh 内联 `git apply` loop |
-| `patches/series` | v2.0 | 旧 patches[] 数组顺序 |
 | `Upstream-Status` 8 状态 | v2.0 | 旧 `status` 5 状态 |
 
-v4 与 v3 兼容(增量加严),可平滑迁移。v3 不可直接回退到 v1。
+v5 与 v4 不兼容(`series.<profile>` / `patches/series` 文件被删除),需迁移到
+`features.yaml`。v5 的 `apply_patch.sh` 仍支持 legacy series 文件参数(平滑过渡),
+但新仓推荐 `--features` 模式。

@@ -7,7 +7,7 @@ lint_patch_headers —— 校验每个 .patch 文件的 DEP-3 邮件式头 schem
     https://dep-team.pages.debian.net/deps/dep3/
   - Yocto OpenEmbedded Upstream-Status 8 状态语义
     https://docs.yoctoproject.org/dev/dev-manual/common-tasks.html#patches
-  - SUSE kernel-source Git-commit 元数据校验思路
+  - git format-patch 邮件式头(From/Date/Subject/Signed-off-by)
 
 校验规则(完整规范见 docs/version-yaml-spec.md §4):
   必填 6 字段 (用户要求):

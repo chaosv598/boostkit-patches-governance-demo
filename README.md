@@ -13,8 +13,8 @@ BoostKit 团队维护的 ARM/Kunpeng 平台优化 patch。
 - **Yocto/OpenEmbedded** recipe 字段 + `Upstream-Status` 8 状态语义
 - **DEP-3** patch 头 schema(6 必填)
 - **Buildroot** `apply-patches.sh` 单点 series 应用器
-- **OpenWrt** `patches/series` 行格式 + **`Config.in` 特性声明**(本仓 v5.0 主线)
-- **Quilt/Debian** `debian/patches/series` 顺序语义
+- **OpenWrt** `package/<name>/Config.in` + `Makefile` 特性声明 + 条件 `PATCHFILES`(本仓 v5.0 主线)
+- **Linux kernel** `Kconfig` `depends` / `select` / `default` 语义
 - **本仓扩展**:`tools/gen_inventory.py` 派生 `inventory.json`(Buildroot/OpenWrt 风格)
 
 **v5.0 关键升级**:用 `patches/features.yaml`(OpenWrt Config.in 风格)替代 v4.0
@@ -222,8 +222,8 @@ make distclean && make -j$(nproc) -DHAVE_KRAIO
 - **Yocto/OpenEmbedded** — recipe 字段(SUMMARY/LICENSE/HOMEPAGE/LIC_FILES_CHKSUM/SECTION)+ `Upstream-Status` 8 状态
 - **DEP-3** (Debian) — patch 头 schema + 6 必填字段
 - **Buildroot** `apply-patches.sh` — series 应用器单点实现
-- **OpenWrt** `patches/series` 行格式 + **`Config.in` 特性声明**(本仓 v5.0 主线)
-- **Quilt/Debian** `debian/patches/series` — 顺序语义
+- **OpenWrt** `package/<name>/Config.in` + `Makefile` — 特性声明 + 条件 `PATCHFILES`(本仓 v5.0 主线)
+- **Linux kernel** `Kconfig` — `depends` / `select` / `default` 语义(深度优先解析 + 环依赖检测)
 - **本仓扩展** — `tools/gen_inventory.py` 派生 inventory.json(Buildroot `pkg-stats` / OpenWrt `metadata.pl` 同款)
 
 **v5.0 关键升级**:用 `patches/features.yaml`(OpenWrt Config.in 风格)替代 v4.0
@@ -266,4 +266,4 @@ make distclean && make -j$(nproc) -DHAVE_KRAIO
   Applies-To/Maintainer/Last-Update)。
 - **2026-07-20** v2.0 重构:精简到 `version-centric + patches/series` 模型,
   删除 `sync-manifest.py` / `whitelist-audit.py` / `build-perf.sh` / 派生 manifest 文件;
-  patch 元数据迁到邮件式头;对齐 SUSE / Debian Quilt / Yocto 等业界方案。
+  patch 元数据迁到邮件式头;对齐 SUSE / Yocto / OpenWrt 等业界方案。
