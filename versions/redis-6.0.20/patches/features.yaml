@@ -1,0 +1,22 @@
+# features.yaml —— redis-6.0.20 特性声明
+#
+# 6.0.20 已 EOL(见 upstream.yaml meta.lifecycle=frozen),只保留 security-only 特性。
+# 业界参照:OpenWrt Config.in + Yocto 条件 SRC_URI + Kconfig depends
+
+features:
+
+  # ─── feature-A: Kunpeng ARM 硬件加速(io_uring 适配) ───
+  feature-A:
+    title: "Kunpeng ARM io_uring 适配(somaxconn/tcp-backlog 调优)"
+    patches:
+      - 0001-hw-kunpeng-adapt-iouring-on-6.0.15-6.0.20.patch
+    depends: []
+    default: true
+    upstream_status_summary:
+      Inappropriate: 1
+
+# 历史说明:
+#   6.0.20 早期有 feature-B(Kunpeng DTOE)和 feature-C(jemalloc),
+#   因 EOL + 上游 6.0 已停维护,2026-Q1 全部迁移到 7.0.15 维护。
+#   本仓保留 6.0.20 在 "frozen" 状态,只 apply 安全相关的 io_uring 适配,
+#   给还没升级的客户继续接受安全补丁。

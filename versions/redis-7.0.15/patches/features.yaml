@@ -1,0 +1,72 @@
+# features.yaml —— redis-7.0.15 特性声明
+#
+# 业界参照:
+#   - OpenWrt package/<name>/Config.in  (bool 选项 + depends + default)
+#   - Yocto   recipes-*/<pkg>.bbappend   (条件 SRC_URI)
+#   - Kconfig (Linux kernel)             (depends / select)
+#
+# apply_patch.sh --features 本文件 [--active "feature-A feature-C"] 自动 compose series
+# 单一真相;patches/<feature>/<patch>.patch 是物理 patch
+#
+# 字段说明:
+#   title           一句话描述
+#   patches         该特性包含的 patch 文件列表(相对 patches/features/<feature>/)
+#   depends         该特性依赖的其他特性(本特性被激活时,依赖项自动激活并先 apply)
+#   default         是否默认激活(默认组合 = 所有 default:true 的并集)
+#   upstream_status 摘要(本特性下 patch 整体上游状态;详细见 patch 邮件式头)
+#
+# 客户使用:
+#   bash tools/apply_patch.sh <repo> <sha> \
+#       --features versions/redis-7.0.15/patches/features.yaml \
+#       versions/redis-7.0.15/patches /tmp/build
+#   # 默认组合 = feature-A + feature-C
+#
+#   ACTIVE_FEATURES="feature-A feature-B" bash tools/apply_patch.sh <repo> <sha> \
+#       --features versions/redis-7.0.15/patches/features.yaml \
+#       versions/redis-7.0.15/patches /tmp/build
+#   # 客户只要 feature-A + feature-B(无 C)
+
+features:
+
+  # ─── feature-A: Kunpeng ARM 硬件加速特性 ───
+  feature-A:
+    title: "Kunpeng ARM 硬件加速(io_uring 适配 + DTOE DMA 网络路径)"
+    patches:
+      - 0001-hw-kunpeng-adapt-iouring.patch
+      - 0002-perf-kunpeng-adapt-dtoe.patch
+    depends: []
+    default: true
+    upstream_status_summary:
+      Submitted: 1
+      Inappropriate: 1
+
+  # ─── feature-B: 通用性能优化(jemalloc) ───
+  feature-B:
+    title: "jemalloc ARM64 pointer-tag + GC decay 策略优化"
+    patches:
+      - 0001-perf-jemalloc-arm64-pointer-tag-and-gc.patch
+    depends: []
+    default: false
+    upstream_status_summary:
+      Submitted: 1
+
+  # ─── feature-C: 可靠性增强(AOF fallback) ───
+  feature-C:
+    title: "RDB 损坏时降级到 AOF,避免硬停服"
+    patches:
+      - 0001-perf-rdb-fallback-aof.patch
+    depends: []
+    default: true
+    upstream_status_summary:
+      Submitted: 1
+
+  # ─── 业务组合示例(供运维参考,实际由 ACTIVE_FEATURES 决定) ───
+  #
+  # 安全合规客户(只跑稳定性 + 通用 HW):
+  #   ACTIVE_FEATURES="feature-A feature-C"
+  #
+  # 性能极限客户(全开):
+  #   ACTIVE_FEATURES="feature-A feature-B feature-C"
+  #
+  # 通用云服务客户(默认):
+  #   ACTIVE_FEATURES="feature-A feature-C"

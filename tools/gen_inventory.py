@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-gen_inventory.py —— 从 patch 头 + series 文件派生 inventory.json
+gen_inventory.py —— 从 patch 头 + features.yaml 派生 inventory.json
 
 参照:
   - Buildroot support/scripts/pkg-stats:
@@ -9,13 +9,18 @@ gen_inventory.py —— 从 patch 头 + series 文件派生 inventory.json
   - OpenWrt scripts/metadata.pl:
     https://github.com/openWRT/openwrt/blob/main/scripts/metadata.pl
     (扫描 Makefile 提取 package 信息)
+  - OpenWrt package/<name>/Config.in:
+    https://github.com/openWRT/openwrt/tree/main/package
+    (bool 选项 + depends + default  →  本仓 features.yaml)
+  - Yocto recipes-*/<pkg>.bbappend:
+    (条件 SRC_URI / DISTRO_FEATURES)
   - Debian dpkg-scanpackages:
     (从 .dsc 派生 Packages 文件)
 
 设计原则:
   - inventory.json 是 *派生产物*,不入仓(.gitignore)
-  - 单一真相仍是 patch 头(DEP-3)+ series 文件
-  - 用途: dashboard / 报告 / 一键查"这个版本有哪些 patch,什么状态"
+  - 单一真相仍是 patch 头(DEP-3)+ features.yaml(OpenWrt Config.in 风格)
+  - 用途: dashboard / 报告 / 一键查"这个版本有哪些 feature + patch + 什么状态"
 
 输出 schema (versions/<v>/patches/inventory.json):
 {
@@ -23,29 +28,43 @@ gen_inventory.py —— 从 patch 头 + series 文件派生 inventory.json
   "upstream": {"repo": "...", "version": "...", "commit": "..."},
   "generated_at": "2026-07-20T12:00:00Z",
   "generator": "tools/gen_inventory.py",
+  "features": {
+    "feature-A": {
+      "title": "...",
+      "patches": ["0001-...patch"],
+      "depends": [],
+      "default": true,
+      "upstream_status_summary": {"Submitted": 1, ...}
+    }
+  },
+  "combos": {
+    "default": {
+      "active": ["feature-A", "feature-C"],
+      "resolved": ["feature-A", "feature-C"],
+      "patch_count": 3,
+      "patch_list": ["features/feature-A/0001-...patch", ...]
+    }
+  },
   "patches": [
     {
-      "file": "0001-foo.patch",
+      "file": "0001-...patch",
+      "path": "features/feature-A/0001-...patch",
+      "feature": "feature-A",
+      "in_features": ["feature-A"],
+      "in_combos": ["default"],
       "upstream_status": "Submitted",
-      "maintainer": "twwang",
+      "maintainer": "...",
       "last_update": "2026-07-20",
       "applies_to": "redis 7.0.15",
       "subject": "...",
-      "description_first_line": "...",
-      "in_series_default": true,
-      "in_profiles": ["minimal", "security"]
-    },
-    ...
+      "description_first_line": "..."
+    }
   ],
-  "profiles": {
-    "default": {"file": "series", "patch_count": 4},
-    "minimal": {"file": "series.minimal", "patch_count": 3}
-  },
   "stats": {
-    "total_patches": 5,
-    "by_upstream_status": {"Submitted": 3, "Inappropriate": 1, ...},
-    "orphans": [],
-    "missing_from_series": []
+    "total_patches": 4,
+    "by_upstream_status": {"Submitted": 3, "Inappropriate": 1},
+    "total_features": 3,
+    "default_features": ["feature-A", "feature-C"]
   }
 }
 
@@ -60,7 +79,6 @@ import argparse
 import datetime
 import glob
 import json
-import os
 import re
 import sys
 from pathlib import Path
@@ -132,38 +150,37 @@ def parse_patch_header(text: str) -> dict[str, str]:
     return headers
 
 
-def read_series(series_path: Path) -> list[str]:
-    """读 series 文件,返回 entry 列表(已 trim + 跳过空行/# 注释)。"""
-    if not series_path.exists():
-        return []
-    entries: list[str] = []
-    for raw in series_path.read_text(encoding="utf-8", errors="replace").splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        entries.append(line)
-    return entries
+def resolve_features(active: list[str], all_features: dict) -> list[str]:
+    """解析依赖,返回 resolved feature 列表(深度优先,depends 在前)。
+    与 apply_patch.sh 的 inline python 等价(独立验证)。"""
+    seen: set[str] = set()
+    resolved: list[str] = []
+
+    def _resolve(name: str, stack: tuple = ()) -> None:
+        if name in seen:
+            return
+        if name in stack:
+            cycle = " -> ".join(stack + (name,))
+            raise ValueError(f"环依赖: {cycle}")
+        if name not in all_features:
+            raise ValueError(f"未知 feature: {name!r}")
+        f = all_features[name]
+        if not isinstance(f.get("patches"), list) or not f["patches"]:
+            raise ValueError(f"feature {name!r}: patches 段缺失或为空")
+        for dep in f.get("depends", []) or []:
+            _resolve(dep, stack + (name,))
+        seen.add(name)
+        resolved.append(name)
+
+    for a in active:
+        _resolve(a)
+    return resolved
 
 
-def discover_profiles(patches_dir: Path) -> dict[str, Path]:
-    """发现 patches/ 下所有 series + series.* profile 文件。
-
-    - series         → profile "default"
-    - series.minimal → profile "minimal"
-    - series.ci      → profile "ci"
-    业界参照:Buildroot/OpenWrt 没有 profile 概念,这是本仓扩展。
-    """
-    profiles: dict[str, Path] = {}
-    main = patches_dir / "series"
-    if main.exists():
-        profiles["default"] = main
-
-    # series.* = profile variants
-    for p in sorted(patches_dir.glob("series.*")):
-        if p.is_file():
-            profile_name = p.name.split(".", 1)[1]
-            profiles[profile_name] = p
-    return profiles
+def find_patches(patches_dir: Path) -> list[Path]:
+    """发现 patches/features/<feature>/*.patch。
+    物理 layout:v5.0 起,patches 必须按 features/<feature>/ 组织。"""
+    return sorted(patches_dir.glob("features/*/*.patch"))
 
 
 def generate_inventory(version_dir: Path) -> dict:
@@ -171,11 +188,14 @@ def generate_inventory(version_dir: Path) -> dict:
     vname = version_dir.name
     uyaml = version_dir / "upstream.yaml"
     patches_dir = version_dir / "patches"
+    features_yaml = patches_dir / "features.yaml"
 
     if not uyaml.exists():
         raise FileNotFoundError(f"{vname}: 缺 upstream.yaml")
     if not patches_dir.is_dir():
         raise FileNotFoundError(f"{vname}: 缺 patches/")
+    if not features_yaml.exists():
+        raise FileNotFoundError(f"{vname}: 缺 patches/features.yaml(v5.0 起必须)")
 
     # 读 upstream.yaml(Yocto recipe 段 + upstream pin)
     u = yaml.safe_load(uyaml.read_text(encoding="utf-8"))
@@ -188,69 +208,124 @@ def generate_inventory(version_dir: Path) -> dict:
         "summary": u.get("SUMMARY", ""),
     }
 
-    # 找所有 patch 文件
-    patch_files = sorted(patches_dir.glob("*.patch"))
+    # 读 features.yaml(OpenWrt Config.in 风格)
+    fdata = yaml.safe_load(features_yaml.read_text(encoding="utf-8"))
+    features_block = fdata.get("features", {}) if isinstance(fdata, dict) else {}
+    if not features_block:
+        raise ValueError(f"{vname}: features.yaml 没有 features 段")
 
-    # 找所有 profile
-    profiles = discover_profiles(patches_dir)
-    default_series_entries = read_series(profiles.get("default", patches_dir / "series"))
+    # 默认 active
+    default_active = [n for n, f in features_block.items() if f.get("default", False)]
+    try:
+        resolved_default = resolve_features(default_active, features_block)
+    except ValueError as e:
+        raise ValueError(f"{vname}: features.yaml 默认组合解析失败: {e}") from None
 
-    # 反向索引:profile name → entry set
-    profile_entries: dict[str, set[str]] = {
-        name: set(read_series(path)) for name, path in profiles.items()
-    }
+    # 反向索引:patch file → feature
+    patch_to_feature: dict[str, str] = {}
+    patch_paths = find_patches(patches_dir)
+    for p in patch_paths:
+        # p = patches/features/<feature>/<patch>
+        rel = p.relative_to(patches_dir).as_posix()  # features/<feature>/<patch>
+        parts = rel.split("/")
+        if len(parts) == 3 and parts[0] == "features":
+            patch_to_feature[p.name] = parts[1]
 
+    # 校验:features.yaml 里声明的 patches 必须真实存在
+    declared_patches: set[str] = set()
+    feat_patches: dict[str, list[str]] = {}
+    for feat_name, info in features_block.items():
+        plist = info.get("patches", []) or []
+        feat_patches[feat_name] = plist
+        for p in plist:
+            declared_patches.add(p)
+            full = patches_dir / "features" / feat_name / p
+            if not full.is_file():
+                raise FileNotFoundError(f"{vname}: feature {feat_name!r} 声明的 patch {p} 不存在 ({full})")
+
+    # 校验:patches/features/<feature>/*.patch 必须在 features.yaml 声明
+    orphans: list[str] = []
+    for p in patch_paths:
+        if p.name not in declared_patches:
+            orphans.append(str(p.relative_to(version_dir)))
+
+    # 每个 patch 头解析
     patches_info = []
     stats_by_status: dict[str, int] = {}
+    feat_status_summary: dict[str, dict[str, int]] = {
+        n: {} for n in features_block
+    }
 
-    for pfile in patch_files:
-        text = pfile.read_text(encoding="utf-8", errors="replace")
-        hdr = parse_patch_header(text)
-        status = hdr.get("Upstream-Status", "")
-        stats_by_status[status] = stats_by_status.get(status, 0) + 1
+    # 按 feature 顺序遍历 resolved_default,然后是其余 feature
+    for feat_name in list(features_block.keys()):
+        for p_file in feat_patches[feat_name]:
+            full = patches_dir / "features" / feat_name / p_file
+            text = full.read_text(encoding="utf-8", errors="replace")
+            hdr = parse_patch_header(text)
+            status = hdr.get("Upstream-Status", "")
+            stats_by_status[status] = stats_by_status.get(status, 0) + 1
+            feat_status_summary[feat_name][status] = feat_status_summary[feat_name].get(status, 0) + 1
 
-        desc_first = hdr.get("Description", "").splitlines()[0] if hdr.get("Description") else ""
+            desc_first = hdr.get("Description", "").splitlines()[0] if hdr.get("Description") else ""
 
-        # 这个 patch 在哪些 profile 里
-        in_profiles = sorted(
-            name for name, entries in profile_entries.items()
-            if pfile.name in entries
-        )
+            # 这个 patch 在哪些 feature 里(1 个)
+            in_features = [feat_name]
+            # 在哪些 combo 里(目前只有 "default")
+            in_combos = ["default"] if feat_name in resolved_default else []
 
-        patches_info.append({
-            "file": pfile.name,
-            "upstream_status": status,
-            "maintainer": hdr.get("Maintainer", ""),
-            "last_update": hdr.get("Last-Update", ""),
-            "applies_to": hdr.get("Applies-To", ""),
-            "subject": hdr.get("Subject", ""),
-            "description_first_line": desc_first,
-            "in_series_default": pfile.name in profile_entries.get("default", set()),
-            "in_profiles": in_profiles,
-        })
+            patches_info.append({
+                "file": p_file,
+                "path": f"features/{feat_name}/{p_file}",
+                "feature": feat_name,
+                "in_features": in_features,
+                "in_combos": in_combos,
+                "upstream_status": status,
+                "maintainer": hdr.get("Maintainer", ""),
+                "last_update": hdr.get("Last-Update", ""),
+                "applies_to": hdr.get("Applies-To", ""),
+                "subject": hdr.get("Subject", ""),
+                "description_first_line": desc_first,
+            })
 
-    # stats: orphan + missing
-    series_set = profile_entries.get("default", set())
-    patch_names = {p["file"] for p in patches_info}
-    orphans = sorted(patch_names - series_set)              # 在 patches/ 但不在 series
-    missing_from_series = sorted(series_set - patch_names) # 在 series 但 patches/ 没文件
+    # features block(给 dashboard)
+    features_info: dict[str, dict] = {}
+    for feat_name, info in features_block.items():
+        features_info[feat_name] = {
+            "title": info.get("title", ""),
+            "patches": info.get("patches", []),
+            "depends": info.get("depends", []),
+            "default": info.get("default", False),
+            "upstream_status_summary": feat_status_summary[feat_name],
+        }
+
+    # default combo
+    default_combo_patch_list: list[str] = []
+    for feat in resolved_default:
+        for p in feat_patches[feat]:
+            default_combo_patch_list.append(f"features/{feat}/{p}")
 
     return {
         "version_id": vname,
         "upstream": upstream,
         "generated_at": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
         "generator": "tools/gen_inventory.py",
-        "patches": patches_info,
-        "profiles": {
-            name: {"file": str(path.relative_to(version_dir)),
-                   "patch_count": len(read_series(path))}
-            for name, path in profiles.items()
+        "features": features_info,
+        "combos": {
+            "default": {
+                "active": default_active,
+                "resolved": resolved_default,
+                "patch_count": len(default_combo_patch_list),
+                "patch_list": default_combo_patch_list,
+            }
         },
+        "patches": patches_info,
         "stats": {
             "total_patches": len(patches_info),
             "by_upstream_status": stats_by_status,
+            "total_features": len(features_block),
+            "default_features": default_active,
             "orphans": orphans,
-            "missing_from_series": missing_from_series,
+            "missing_from_features_yaml": sorted(declared_patches - {p["file"] for p in patches_info}),
         },
     }
 
@@ -258,7 +333,7 @@ def generate_inventory(version_dir: Path) -> dict:
 def write_inventory(version_dir: Path, inv: dict, check: bool = False) -> int:
     """写 inventory.json 到 patches/。check 模式下,只在有差异时 exit 1。
 
-    check 模式忽略 generated_at(每次跑都不同);只比对业务字段(profile/patches/stats)。
+    check 模式忽略 generated_at(每次跑都不同);只比对业务字段。
     """
     out_path = version_dir / "patches" / "inventory.json"
     new_text = json.dumps(inv, indent=2, ensure_ascii=False, sort_keys=False) + "\n"
@@ -268,13 +343,11 @@ def write_inventory(version_dir: Path, inv: dict, check: bool = False) -> int:
             print(f"  ✗ {out_path}: 不存在(请先生成)")
             return 1
         existing = out_path.read_text(encoding="utf-8")
-        # 生成 new 的快照,把 generated_at 置为 sentinel 再比对(避免每次跑时间戳不同)
         new_for_cmp = json.loads(new_text)
         new_for_cmp["generated_at"] = "TIMESTAMP"
         new_text_cmp = json.dumps(new_for_cmp, indent=2, ensure_ascii=False, sort_keys=False) + "\n"
         existing_for_cmp = existing.replace(_existing_timestamp(existing), "TIMESTAMP", 1)
         if existing_for_cmp != new_text_cmp:
-            # 显示具体 diff 行号(摘前 5 行差异)
             print(f"  ✗ {out_path}: 差异(请重新生成)")
             return 1
         print(f"  ✓ {out_path}: up-to-date")
@@ -282,30 +355,28 @@ def write_inventory(version_dir: Path, inv: dict, check: bool = False) -> int:
     else:
         out_path.write_text(new_text, encoding="utf-8")
         print(f"  ✓ wrote {out_path} ({inv['stats']['total_patches']} patches, "
-              f"{len(inv['profiles'])} profiles)")
+              f"{inv['stats']['total_features']} features)")
         return 0
 
 
 def _existing_timestamp(text: str) -> str:
-    """从已存在的 inventory.json 里抠出 'generated_at' 的值字符串。
-    找形如 '  "generated_at": "2026-07-20T12:28:59+00:00"' 的行,返回那个时间戳串。"""
+    """从已存在的 inventory.json 里抠出 'generated_at' 的值字符串。"""
     m = re.search(r'"generated_at":\s*"([^"]+)"', text)
     return m.group(1) if m else ""
 
 
 def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
-        description="Generate inventory.json from patch headers + series files."
+        description="Generate inventory.json from patch headers + features.yaml."
     )
     parser.add_argument("paths", nargs="+",
                         help="versions/<v>/ 目录(可多个,支持 glob)")
     parser.add_argument("--check", action="store_true",
-                        help="CI 模式:inventory.json 不存在或与 patch 头不一致即 exit 1")
+                        help="CI 模式:inventory.json 不存在或与 patch 头 + features.yaml 不一致即 exit 1")
     args = parser.parse_args(argv[1:])
 
     rc = 0
     for path_str in args.paths:
-        # 展开 glob
         if any(c in path_str for c in "*?["):
             matches = sorted(glob.glob(path_str))
         else:
@@ -319,7 +390,7 @@ def main(argv: list[str]) -> int:
                 continue
             try:
                 inv = generate_inventory(vdir)
-            except (FileNotFoundError, yaml.YAMLError) as e:
+            except (FileNotFoundError, ValueError, yaml.YAMLError) as e:
                 print(f"  ✗ {m}: {e}", file=sys.stderr)
                 rc = 1
                 continue

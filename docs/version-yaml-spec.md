@@ -1,31 +1,33 @@
 # version-yaml 字段规范
 
 > 权威定义 `versions/<upstream-id>/` 下文件的字段语义和约束。
-> 本规范**集合 Yocto / DEP-3 / Buildroot-OpenWrt 三家之长**:
+> 本规范**集合 Yocto / DEP-3 / Buildroot-OpenWrt / Kconfig 五家之长**:
 > - **`upstream.yaml` 字段名 = Yocto/OpenEmbedded recipe 同款**
 >   ([SUMMARY / LICENSE / LIC_FILES_CHKSUM / HOMEPAGE / SECTION](https://docs.yoctoproject.org/ref-manual/variables.html))
 > - **patch 头 schema = DEP-3 同款** 6 必填字段
 >   ([DEP-3](https://dep-team.pages.debian.net/deps/dep3/))
-> - **series 顺序 + apply 脚本 = Buildroot/OpenWrt 同款**
+> - **patch apply 脚本 = Buildroot/OpenWrt 同款**
 >   ([Buildroot apply-patches.sh](https://github.com/buildroot/buildroot/blob/master/support/scripts/apply-patches.sh))
+> - **feature 声明 + depends + default = OpenWrt Config.in + Kconfig 同款**
+>   ([OpenWrt package Config.in](https://github.com/openWRT/openwrt/tree/main/package))
+> - **feature 组合 + 条件 PATCHFILES = Yocto 条件 SRC_URI 同款**
+>   ([Yocto bbappend SRC_URI](https://docs.yoctoproject.org/bitbake/recipes/))
 >
 > 详细设计原理见 [governance.md](./governance.md)。
 
 ## 1. 目录结构
 
-每个 `versions/<upstream-id>/` 子目录固定包含 3 类文件:
+每个 `versions/<upstream-id>/` 子目录固定包含:
 
 ```
 versions/<upstream-id>/
 ├── upstream.yaml            # recipe 元数据 (Yocto) + 上游 pin + 治理归属
 └── patches/
-    ├── series               # patch 应用顺序(自上而下,默认 profile)
-    ├── series.<profile>     # profile 系列文件(可选,见 §3.3)
-    └── *.patch              # patch 文件(DEP-3 邮件式头 + diff)
+    ├── features.yaml        # ★ feature 声明(OpenWrt Config.in 风格;单一权威)
+    ├── features/<feature>/  # 一特性一目录
+    │   └── *.patch          # 该特性下的 patch(DEP-3 邮件式头 + diff)
+    └── inventory.json       # 派生(不入仓,见 §6)
 ```
-
-派生(不入仓):
-- `inventory.json` — `tools/gen_inventory.py` 从 patch 头 + series 派生(见 §6)
 
 `<upstream-id>` 命名约定:`<project>-<version>`,例如 `redis-7.0.15`。
 
@@ -112,85 +114,156 @@ meta:
 
 ---
 
-## 3. `patches/series`
+## 3. `patches/features.yaml`(OpenWrt Config.in 风格 — v5.0 单一权威)
 
-**唯一权威**的 patch 应用顺序清单。Buildroot/OpenWrt 同款。
+**v5.0 起,本仓不再用 `patches/series` 文件**。所有 patch 应用顺序与组合由
+`features.yaml` 声明,`tools/apply_patch.sh` 在执行时 inline compose 成 tmp series
+文件,然后按 series 应用(与 v4.0 兼容的"series 文件"路径依然支持)。
 
-### 3.1 格式
+### 3.1 完整 schema
 
-```text
-# 行格式:<patch 路径>(相对 patches/)
-# 允许:空行、注释(#)、尾随空白
-# 禁止:相对路径、绝对路径、Glob、变量展开
+```yaml
+# OpenWrt Config.in + Kconfig depends 的 YAML 等价
+# 业界参照:OpenWrt package/<name>/Config.in + Yocto 条件 SRC_URI
+features:
 
-0001-hw-kunpeng-adapt-iouring.patch
-0002-perf-kunpeng-adapt-dtoe.patch
-0003-perf-jemalloc-arm64-pointer-tag-and-gc.patch
-0004-perf-rdb-fallback-aof.patch
+  feature-A:
+    title: "Kunpeng ARM 硬件加速(io_uring 适配 + DTOE DMA 网络路径)"
+    patches:
+      - 0001-hw-kunpeng-adapt-iouring.patch
+      - 0002-perf-kunpeng-adapt-dtoe.patch
+    depends: []               # 无依赖
+    default: true             # 默认激活
+    upstream_status_summary:
+      Submitted: 1
+      Inappropriate: 1
+
+  feature-B:
+    title: "jemalloc ARM64 pointer-tag + GC decay 策略优化"
+    patches:
+      - 0001-perf-jemalloc-arm64-pointer-tag-and-gc.patch
+    depends: []
+    default: false            # 默认不激活
+    upstream_status_summary:
+      Submitted: 1
+
+  feature-C:
+    title: "RDB 损坏时降级到 AOF,避免硬停服"
+    patches:
+      - 0001-perf-rdb-fallback-aof.patch
+    depends: []               # 若 depends: [feature-A] 则激活 C 时自动 include A
+    default: true
+    upstream_status_summary:
+      Submitted: 1
 ```
 
-### 3.2 规则
+### 3.2 字段表
 
-- **每行 1 条**:一条 patch 路径,自上而下应用
-- **顺序权威**:filename `0001-` 仅辅助阅读/检索,可任意重命名,不影响顺序
-- **必填条件**:`series` 中的每条路径必须对应 `patches/<path>.patch` 实际存在
-- **孤儿检查**:`patches/*.patch` 中没被 `series` 引用的视为孤儿,CI 报错
-- **去重检查**:`series` 中重复路径视为错误
-- **注释**:以 `#` 开头的行视为注释,跳过
-- **空行**:跳过
+| 字段 | 必填 | 类型 | 语义 |
+|---|---|---|---|
+| `features.<name>.title` | 推荐 | string | 一句话描述(给 dashboard / 文档用) |
+| `features.<name>.patches` | **是** | list[str] | 该 feature 包含的 patch 文件名(相对 `patches/features/<name>/`) |
+| `features.<name>.depends` | 否 | list[str] | 依赖的其他 feature(本 feature 激活时,依赖项自动激活并先 apply) |
+| `features.<name>.default` | 否 | bool | 是否默认激活(默认组合 = 所有 `default:true` 的并集) |
+| `features.<name>.upstream_status_summary` | 否 | dict[str,int] | 该 feature 下 patch 状态分布(给 dashboard 用;详细见 patch 头) |
 
-### 3.3 Profile 系列文件(`series.<profile>`)— 本仓扩展
-
-为支持"同一 upstream + 多个 patch 集合"场景(例:full / minimal / security / ci),
-主 `series` 文件之外允许创建 `series.<profile>` 作为**profile 系列文件**:
+### 3.3 物理目录布局
 
 ```text
-versions/redis-7.0.15/patches/
-├── series              # 默认 profile (name="default")
-├── series.minimal      # profile "minimal":跳过 Kunpeng HW / jemalloc 子模块
-└── series.security     # profile "security":只保留 AOF fallback
+patches/
+├── features.yaml                 # ★ 单一权威
+├── features/                     # 一特性一目录
+│   ├── feature-A/
+│   │   ├── 0001-hw-kunpeng-adapt-iouring.patch
+│   │   └── 0002-perf-kunpeng-adapt-dtoe.patch
+│   ├── feature-B/
+│   │   └── 0001-perf-jemalloc-arm64-pointer-tag-and-gc.patch
+│   └── feature-C/
+│       └── 0001-perf-rdb-fallback-aof.patch
+└── inventory.json                # 派生(不入仓)
 ```
 
-**调用方式**:`tools/apply_patch.sh` 接受任意 series 文件路径,所以 profile 直接复用:
+每个 feature 下 patch 文件名 `0001-` 仅辅助阅读/检索,顺序由 `patches.yaml`
+里 `patches:` 列表决定。
+
+### 3.4 组合(combo)— 客户用 `ACTIVE_FEATURES` 选
+
+**默认组合** = features.yaml 里 `default:true` 的并集。
+**显式组合** = 环境变量 `ACTIVE_FEATURES="<空格分隔的 feature 名>"` 或 `--active` 参数。
 
 ```bash
+# 默认组合(feature-A + feature-C)
 bash tools/apply_patch.sh \
     https://github.com/redis/redis \
     f35f36a265403c07b119830aa4bb3b7d71653ec9 \
-    versions/redis-7.0.15/patches/series.security \
-    versions/redis-7.0.15/patches \
-    /tmp/build-security
+    --features versions/redis-7.0.15/patches/features.yaml \
+    versions/redis-7.0.15/patches /tmp/build
+
+# 客户 A:只要 feature-C
+ACTIVE_FEATURES="feature-C" bash tools/apply_patch.sh ... --features ... /tmp/build-a
+
+# 客户 B:全开
+ACTIVE_FEATURES="feature-A feature-B feature-C" bash tools/apply_patch.sh ... /tmp/build-b
+
+# --active 参数等价于 ACTIVE_FEATURES 环境变量
+bash tools/apply_patch.sh ... --features ... --active "feature-B feature-C" /tmp/build-c
 ```
 
-**lint 规则**(与主 series 略有差别):
-- 所有 series 文件都查 "无重复 entry" + "entry 引用必须存在"
-- **只有主 series 强制孤儿检查**(profile 本就是子集,允许不含某些 patch)
-- profile 文件允许为空(0 条)或只含 1 条
+### 3.5 依赖解析(`depends`)
 
-**业界对照**:
-- **Buildroot** — `package/<name>/<name>-<variant>.patch` (variant 系列)
-- **OpenWrt** — `PATCHFILES` 配合 `CONFIG_*` 条件(参见 OpenWrt Makefile)
-- **本仓扩展** — `series` + `series.<profile>` 二选一(参见 §3.4)
+`apply_patch.sh` 在 compose 时:
+1. 校验所有 ACTIVE feature 名都在 features 里
+2. 深度优先解析 depends(自动 include,dedup,环依赖检测)
+3. resolved 顺序 = depends 在前(被依赖的先 apply)
+4. 校验每个 patch 物理存在
 
-### 3.4 系列文件 vs per-feature 多系列(本仓选择)
+```text
+# 例:feature-C 依赖 feature-A
+ACTIVE_FEATURES="feature-C"
+  → resolved: [feature-A, feature-C]   # A 自动 include 并排前面
+  → patches: [features/feature-A/0001..., features/feature-C/0001...]
+
+# 例:环依赖
+feature-A.depends: [feature-B]
+feature-B.depends: [feature-A]
+  → compose 失败:环依赖: A -> B -> A
+```
+
+### 3.6 业界对齐
+
+- **OpenWrt Config.in** — `bool` 选项 + `depends on` + `default y` ([OpenWrt package](https://github.com/openWRT/openwrt/tree/main/package))
+- **Linux kernel Kconfig** — `depends on` / `select` 语义
+- **Yocto 条件 SRC_URI** — `${@bb.utils.contains('DISTRO_FEATURES', ...)}`
+- **Buildroot defconfig** — `BR2_PACKAGE_*=y` per package
+- **Quilt topic branches** — per-feature patch stack(本仓不引入,过度设计)
+
+### 3.7 为什么 1 features.yaml = 1 upstream(而非 per-feature 多 yaml)
 
 | 方案 | 适用场景 | 代表项目 |
 |---|---|---|
-| **1 个 series = 1 个 upstream/version**(本仓选择) | 1 个上游版本的所有 patch 全部入仓,profile 文件做子集 | ungoogled-chromium / Buildroot / OpenWrt |
-| 1 个 series = 1 个 feature 模块 | 不同 feature 装/卸独立 | Linux kernel(若干子目录)|
-| 1 个 series = 1 个 profile | 同一上游多 profile | Quilt 风格的 Debian 包 |
+| **1 features.yaml = 1 upstream/version**(本仓选择) | 1 个上游版本的所有 feature 全部声明,组合由 ACTIVE_FEATURES 决定 | OpenWrt / Yocto / Kconfig / Kbuild |
+| 1 series = 1 feature 模块 | 不同 feature 装/卸独立 | Linux kernel(若干子目录)|
+| 1 repo = N feature yaml | 微服务/multi-tenant | Nx / Turborepo |
 
 **为什么选方案 1**:
-- 单 source 真相:每个 upstream/version 只有 1 个主 series,patches/ 下所有 patch 都必须挂在它上面
-- profile 子集通过 `series.<profile>` 表达,避免 per-feature 引入 DAG
-- 与 Buildroot / OpenWrt / ungoogled-chromium 业界共识一致
+- 单 source 真相:每个 upstream/version 只有 1 个 features.yaml
+- 组合由 ACTIVE_FEATURES 决定,不引入 DAG,grep 可追
+- 与 OpenWrt / Yocto 业界共识一致
 
-### 3.5 业界对齐
+### 3.8 Legacy 兼容:旧 `patches/series` 文件依然支持
 
-- **Buildroot** — `package/<name>/patches/series` 同款格式
-- **OpenWrt** — `package/<name>/patches/series` 同款格式
-- **Quilt/Debian** — `debian/patches/series` 同款"自上而下顺序清单"
-- **SUSE** — `series.conf` 同款显式清单(本项目不引入 guards + SHA-256 校验和)
+为平滑迁移,`apply_patch.sh` 仍接受传统 series 文件路径:
+
+```bash
+# 仍可工作(legacy):传 series 文件而非 --features
+bash tools/apply_patch.sh \
+    https://github.com/redis/redis \
+    f35f36a... \
+    versions/redis-7.0.15/patches/series \
+    versions/redis-7.0.15/patches /tmp/build
+```
+
+新仓推荐用 `--features` 模式;老仓可继续 series 模式直到迁移完成。
 
 ---
 

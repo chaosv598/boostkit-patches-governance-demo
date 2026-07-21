@@ -9,16 +9,19 @@ Kunpeng BoostKit Redis
 Kunpeng BoostKit Redis 是基于上游 Redis 的 patch overlay,在固定上游版本基线上叠加
 BoostKit 团队维护的 ARM/Kunpeng 平台优化 patch。
 
-**核心模型**:version-centric + 显式 `patches/series`(**集合 5 家业界方案之长 + 2 项扩展**):
+**核心模型**:version-centric + feature 声明(**集合 5 家业界方案之长**):
 - **Yocto/OpenEmbedded** recipe 字段 + `Upstream-Status` 8 状态语义
 - **DEP-3** patch 头 schema(6 必填)
 - **Buildroot** `apply-patches.sh` 单点 series 应用器
-- **OpenWrt** `patches/series` 行格式
+- **OpenWrt** `patches/series` 行格式 + **`Config.in` 特性声明**(本仓 v5.0 主线)
 - **Quilt/Debian** `debian/patches/series` 顺序语义
-- **本仓扩展**:`series.<profile>` profile 系列文件(同款于 Buildroot variant)
 - **本仓扩展**:`tools/gen_inventory.py` 派生 `inventory.json`(Buildroot/OpenWrt 风格)
 
-见 [docs/governance.md §2](./docs/governance.md#2-业界出处集合-5-家-本仓-2-扩展)。
+**v5.0 关键升级**:用 `patches/features.yaml`(OpenWrt Config.in 风格)替代 v4.0
+的 `series.<profile>`,客户用 `ACTIVE_FEATURES` 选特性组合;compose 逻辑
+**集成到 `apply_patch.sh` 内部**(用户约束:不另起新脚本)。
+
+见 [docs/governance.md §2](./docs/governance.md#2-业界出处集合-5-家)。
 
 ## 目录结构
 
@@ -29,26 +32,26 @@ boostkit-patches-governance-demo/
 ├── .github/
 │   ├── PULL_REQUEST_TEMPLATE.md
 │   ├── lint_patch_headers.py            # DEP-3 6 必填字段校验
-│   ├── lint_series.py                   # series + series.* profile 一致性校验
+│   ├── lint_series.py                   # v5.0 起 lint features.yaml(schema + depends + DEP-3 必填)
 │   └── workflows/
-│       ├── ci.yml                       # 4 步:verify + patch 头 lint + series lint + inventory check
+│       ├── ci.yml                       # 4 步:verify + patch 头 lint + features lint + inventory check
 │       └── build-perf.yml               # 骨架演示 workflow(matrix + clean apply 真跑 + 后续 echo)
 ├── tools/
-│   ├── verify.sh                        # 仓根禁放 + upstream.yaml schema(委托 apply_patch.sh)+ 派生 inventory
-│   ├── apply_patch.sh                   # ★ Buildroot 风格 series 应用器(单点实现)
+│   ├── verify.sh                        # 仓根禁放 + upstream.yaml schema(委托 apply_patch.sh --features)+ 派生 inventory
+│   ├── apply_patch.sh                   # ★ Buildroot 风格 series 应用器 + v5.0 --features 模式(inline compose)
 │   └── gen_inventory.py                 # 派生 inventory.json(Buildroot/OpenWrt 风格)
 ├── docs/
-│   ├── governance.md                    # ★ 设计原理 + 5 家业界出处 + 2 项本仓扩展
+│   ├── governance.md                    # ★ 设计原理 + 5 家业界出处
 │   ├── version-yaml-spec.md             # ★ 字段权威定义
 │   └── (产品指南 zh/en 保留)
 └── versions/
     └── <upstream-id>/                   # 例如 redis-7.0.15
         ├── upstream.yaml                # Yocto recipe 字段 + upstream pin + 治理归属
         └── patches/
-            ├── series                   # ★ 唯一权威顺序(默认 profile)
-            ├── series.<profile>         # profile 系列文件(可选,如 series.minimal / series.security)
-            ├── inventory.json           # 派生(不入仓,gitignore)
-            └── *.patch                  # DEP-3 邮件式头(6 必填)+ diff
+            ├── features.yaml            # ★ feature 声明(OpenWrt Config.in 风格,单一权威)
+            ├── features/<feature>/      # 一特性一目录
+            │   └── *.patch              # DEP-3 邮件式头(6 必填)+ diff
+            └── inventory.json           # 派生(不入仓,gitignore)
 ```
 
 ## 快速开始
@@ -79,67 +82,107 @@ meta:
   lifecycle: active
 ```
 
-`versions/redis-7.0.15/patches/series`(自上而下应用):
+`versions/redis-7.0.15/patches/features.yaml`(OpenWrt Config.in 风格,单一权威):
+
+```yaml
+# 业界参照:OpenWrt package/<name>/Config.in + Kconfig depends + Yocto 条件 SRC_URI
+features:
+  feature-A:
+    title: "Kunpeng ARM 硬件加速(io_uring 适配 + DTOE DMA 网络路径)"
+    patches:
+      - 0001-hw-kunpeng-adapt-iouring.patch
+      - 0002-perf-kunpeng-adapt-dtoe.patch
+    depends: []
+    default: true                                # 默认激活
+    upstream_status_summary:
+      Submitted: 1
+      Inappropriate: 1
+  feature-B:
+    title: "jemalloc ARM64 pointer-tag + GC decay 策略优化"
+    patches:
+      - 0001-perf-jemalloc-arm64-pointer-tag-and-gc.patch
+    depends: []
+    default: false                               # 默认不激活
+  feature-C:
+    title: "RDB 损坏时降级到 AOF,避免硬停服"
+    patches:
+      - 0001-perf-rdb-fallback-aof.patch
+    depends: []
+    default: true
+```
+
+物理 patch 按 feature 分目录:
 
 ```text
-0001-hw-kunpeng-adapt-iouring.patch
-0002-perf-kunpeng-adapt-dtoe.patch
-0003-perf-jemalloc-arm64-pointer-tag-and-gc.patch
-0004-perf-rdb-fallback-aof.patch
+versions/redis-7.0.15/patches/features/
+├── feature-A/
+│   ├── 0001-hw-kunpeng-adapt-iouring.patch
+│   └── 0002-perf-kunpeng-adapt-dtoe.patch
+├── feature-B/
+│   └── 0001-perf-jemalloc-arm64-pointer-tag-and-gc.patch
+└── feature-C/
+    └── 0001-perf-rdb-fallback-aof.patch
 ```
 
 ### 2. 本地验证
 
 ```bash
-# 1. 仓根干净 + upstream.yaml schema + clean clone + 按 series apply + 派生 inventory
-#    (内部委托给 tools/apply_patch.sh,Buildroot 风格)
+# 1. 仓根干净 + upstream.yaml schema + clean clone + 按 features.yaml apply + 派生 inventory
+#    (内部委托给 tools/apply_patch.sh --features,Buildroot 风格 + v5.0 inline compose)
 bash tools/verify.sh
 
 # 2. DEP-3 patch 头 schema 校验(6 必填:Description/Origin/Upstream-Status/Applies-To/Maintainer/Last-Update)
 python3 .github/lint_patch_headers.py versions/*/patches/
 
-# 3. series 一致性(无孤儿 + 无重复;profile 文件 series.* 自动识别)
+# 3. features.yaml schema + depends 解析 + DEP-3 必填字段
 python3 .github/lint_series.py versions/*/patches/
 
-# 4. inventory.json 与 patch 头 + series 一致(忽略 generated_at 时间戳)
+# 4. inventory.json 与 patch 头 + features.yaml 一致(忽略 generated_at 时间戳)
 python3 tools/gen_inventory.py --check versions/*/
 ```
 
-### 2.6 Profile 系列文件(同一 upstream 多 patch 集合)
+### 2.5 Feature 组合(同一 upstream 多特性组合)
 
-需要只 apply 部分 patch 时(例:CI 跳过 HW-specific 优化),用 `series.<profile>`:
+需要只 apply 部分 feature 时(例:客户只要 feature-C 可靠性),用 `ACTIVE_FEATURES`:
 
 ```bash
-# 创建 profile 系列文件(普通 series 格式,每行 1 patch)
-cat > versions/redis-7.0.15/patches/series.ci <<'EOF'
-# CI smoke profile:只跑 0001 + 0004,跳过 0002 (Kunpeng HW) / 0003 (jemalloc 子模块)
-0001-hw-kunpeng-adapt-iouring.patch
-0004-perf-rdb-fallback-aof.patch
-EOF
-
-# profile 直接复用 apply_patch.sh(接受任意 series 文件)
+# 默认组合 = features.yaml 中 default:true 的并集(本仓 = feature-A + feature-C)
 bash tools/apply_patch.sh \
     https://github.com/redis/redis \
     f35f36a265403c07b119830aa4bb3b7d71653ec9 \
-    versions/redis-7.0.15/patches/series.ci \
+    --features versions/redis-7.0.15/patches/features.yaml \
     versions/redis-7.0.15/patches \
-    /tmp/build-ci
+    /tmp/build
 
-# inventory.json 自动反映新 profile(派生物,不入仓)
-python3 -c "import json; d=json.load(open('versions/redis-7.0.15/patches/inventory.json')); \
-    [print(f\"{p['file']:50s} profiles={p['in_profiles']}\") for p in d['patches']]"
+# 客户 A:只要 feature-C 可靠性
+ACTIVE_FEATURES="feature-C" bash tools/apply_patch.sh \
+    https://github.com/redis/redis \
+    f35f36a265403c07b119830aa4bb3b7d71653ec9 \
+    --features versions/redis-7.0.15/patches/features.yaml \
+    versions/redis-7.0.15/patches \
+    /tmp/build-a
+
+# 客户 B:全开(包括默认不激活的 feature-B)
+ACTIVE_FEATURES="feature-A feature-B feature-C" bash tools/apply_patch.sh ... --features ... /tmp/build-b
+
+# 等价的 --active 参数(便于 CI / 测试传参)
+bash tools/apply_patch.sh ... --features ... --active "feature-B feature-C" /tmp/build-c
 ```
 
-业界出处:Buildroot `package/<name>/<name>-<variant>.patch` / OpenWrt `PATCHFILES` + `CONFIG_*`。
-详见 [docs/version-yaml-spec.md §3.3](./docs/version-yaml-spec.md#33-profile-系列文件seriesprofile--本仓扩展)。
+`depends` 字段让 feature 自动 include 依赖项(例:feature-C.depends=[feature-A] 时,
+激活 C 会自动先 apply A)。
 
-### 2.5 单独跑 series apply(Buildroot 风格)
+业界出处:OpenWrt `package/<name>/Config.in`(bool + depends + default)+ Linux kernel `Kconfig` + Yocto 条件 SRC_URI。
+详见 [docs/version-yaml-spec.md §3](./docs/version-yaml-spec.md#3-patchesfeaturesyamlopenwrt-configin-风格--v50-单一权威)。
+
+### 2.6 单独跑 feature apply(Buildroot 风格)
 
 ```bash
+# 默认组合
 bash tools/apply_patch.sh \
     https://github.com/redis/redis \
     f35f36a265403c07b119830aa4bb3b7d71653ec9 \
-    versions/redis-7.0.15/patches/series \
+    --features versions/redis-7.0.15/patches/features.yaml \
     versions/redis-7.0.15/patches \
     /tmp/build
 ```
@@ -147,11 +190,11 @@ bash tools/apply_patch.sh \
 ### 3. 在 Kunpeng 上构建
 
 ```bash
-# 1) clean clone + apply series(走 tools/apply_patch.sh,Buildroot 风格单点实现)
+# 1) clean clone + apply default features(走 tools/apply_patch.sh --features,Buildroot 风格单点实现)
 bash tools/apply_patch.sh \
     https://github.com/redis/redis \
     f35f36a265403c07b119830aa4bb3b7d71653ec9 \
-    versions/redis-7.0.15/patches/series \
+    --features versions/redis-7.0.15/patches/features.yaml \
     versions/redis-7.0.15/patches \
     /tmp/build
 
@@ -175,20 +218,23 @@ make distclean && make -j$(nproc) -DHAVE_KRAIO
 - **字段权威定义**:[docs/version-yaml-spec.md](./docs/version-yaml-spec.md)
 - **操作步骤(新增/废弃 patch 等)**:[docs/governance.md §4](./docs/governance.md#4-常见操作)
 
-业界出处(5 家 + 2 项本仓扩展):
+业界出处(5 家 + 1 项本仓扩展):
 - **Yocto/OpenEmbedded** — recipe 字段(SUMMARY/LICENSE/HOMEPAGE/LIC_FILES_CHKSUM/SECTION)+ `Upstream-Status` 8 状态
 - **DEP-3** (Debian) — patch 头 schema + 6 必填字段
 - **Buildroot** `apply-patches.sh` — series 应用器单点实现
-- **OpenWrt** `patches/series` — 行格式
+- **OpenWrt** `patches/series` 行格式 + **`Config.in` 特性声明**(本仓 v5.0 主线)
 - **Quilt/Debian** `debian/patches/series` — 顺序语义
-- **本仓扩展** — `series.<profile>` profile 系列文件(Buildroot variant 同款)
 - **本仓扩展** — `tools/gen_inventory.py` 派生 inventory.json(Buildroot `pkg-stats` / OpenWrt `metadata.pl` 同款)
+
+**v5.0 关键升级**:用 `patches/features.yaml`(OpenWrt Config.in 风格)替代 v4.0
+的 `series.<profile>`,客户用 `ACTIVE_FEATURES` 选特性组合;compose 逻辑
+**集成到 `apply_patch.sh` 内部**(用户约束:不另起新脚本)。
 
 ## 贡献
 
 只接受 PR,不接受直推 master。流程:
 
-1. 新增 patch → 写 DEP-3 头(6 必填)+ 修改 `patches/series` 一行
+1. 新增 patch → 放 `patches/features/<feature>/` + 写 DEP-3 头(6 必填)+ 在 `features.yaml` 加 entry
 2. 跑本地 4 工具全绿(verify 含 inventory 派生 + 3 lint 工具)
 3. 开 PR,触发 `ci.yml` 4 步 + `build-perf.yml` matrix(骨架)
 4. 维护者 review → merge
@@ -201,6 +247,14 @@ make distclean && make -j$(nproc) -DHAVE_KRAIO
 
 ## 变更通知
 
+- **2026-07-21** v5.0:升级到 OpenWrt Config.in 风格的 **feature + combo** 模型。
+  `patches/features.yaml` 集中声明 feature(`title`/`patches`/`depends`/`default`),
+  patch 物理按 `features/<feature>/` 分目录;**compose 逻辑集成到 `apply_patch.sh`
+  内部**(inline python heredoc,**不增加新脚本**)。客户用 `ACTIVE_FEATURES="f1 f2"`
+  或 `--active "f1 f2"` 选特性组合;`depends` 字段让 feature 自动 include 依赖项
+  并先 apply。inventory.json 新增 `features`/`combos` 段。`lint_series.py` v5.0
+  起改为 lint `features.yaml`(schema + depends + DEP-3 必填)。删 v4.0 的
+  `series`/`series.<profile>` 系列文件。
 - **2026-07-20** v4.0:新增 `tools/gen_inventory.py`(Buildroot/OpenWrt 风格派生
   inventory.json)+ `series.<profile>` profile 系列文件。inventory.json 入
   `.gitignore`,由 `tools/verify.sh` 自动重生成;CI 加第 4 步

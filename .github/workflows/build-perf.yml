@@ -9,20 +9,21 @@
 #   1. detect changed versions   → 从 versions/*/upstream.yaml 构造 matrix
 #   2. (would-be) Install deps   → apt-get build-essential tcl libssl-dev libevent-dev + memtier 源码
 #   3. (would-be) Clean clone    → git clone upstream + checkout pinned commit
-#   4. (would-be) Apply series   → 按 patches/series 顺序 git apply
+#   4. (would-be) Apply features → 按 features.yaml 委托 apply_patch.sh --features
 #   5. (would-be) make patched redis → make distclean && make -j
 #   6. (would-be) memtier_benchmark → redis-server + benchmark + parse summary
 #
-# 本仓 CI 上的把关完全交给 ci.yml 的 3 步:
-#   1. bash tools/verify.sh             ← clean clone + 按 series apply (失败降级 warning)
-#   2. python3 .github/lint_patch_headers.py  ← patch 邮件式头 schema
-#   3. python3 .github/lint_series.py   ← series 一致性
+# 本仓 CI 上的把关完全交给 ci.yml 的 4 步:
+#   1. bash tools/verify.sh                  ← clean clone + 按 features.yaml apply (失败降级 warning)
+#   2. python3 .github/lint_patch_headers.py ← patch 邮件式头 schema
+#   3. python3 .github/lint_series.py        ← features.yaml 一致性(schema + depends + DEP-3 必填)
+#   4. python3 tools/gen_inventory.py --check← 派生 inventory.json 一致性
 #
 # 真要跑(在 Kunpeng self-hosted runner 上):
 #   1. 拷本文件 skeleton 改成 'run: <实际命令>' 即可
 #   2. 或在 docs/governance.md §3.2 "本地复跑" 段按步骤手动跑
 #
-# 输入: versions/<v>/upstream.yaml + patches/series + patches/*.patch
+# 输入: versions/<v>/upstream.yaml + patches/features.yaml + patches/features/<f>/*.patch
 # 输出(本骨架): Job Summary 展示 matrix 检测结果 + 每个 version 的步骤意图
 
 name: build-perf
@@ -105,8 +106,8 @@ jobs:
       - name: "[skeleton] Install build deps + memtier from source"
         run: |
           echo "::group::[skeleton] apt-get build deps"
-          echo "  sudo apt-get install -y --no-install-recommends \\"
-          echo "    build-essential pkg-config \\"
+          echo "  sudo apt-get install -y --no-install-recommends \"
+          echo "    build-essential pkg-config \"
           echo "    tcl tcl-dev libssl-dev libevent-dev"
           echo "  cd /tmp"
           echo "  git clone --depth 1 --branch 2.1.0 https://github.com/RedisLabs/memtier_benchmark.git"
@@ -125,48 +126,32 @@ jobs:
           echo "::endgroup::"
           echo "[skeleton] actions/cache 启用后,二次跑可省 clone upstream 时间"
 
-      # --- (would-be) Step 3: clean clone + fetch target commit + apply series ---
+      # --- (would-be) Step 3: clean clone + fetch target commit + apply features ---
       # 此步真的跑(只到 apply,不跑 make)— 与 ci.yml verify.sh 的 apply 段等价
       # 但放在 build-perf job 里再跑一次,作为"PR pipeline"视角下的二次确认
-      - name: "Apply series on clean clone"
+      #
+      # v5.0:委托给 tools/apply_patch.sh --features(inline compose),不再直接读 series 文件
+      - name: "Apply features on clean clone (v5.0)"
         run: |
           VID="$VID" UPSTREAM_REPO="$UPSTREAM_REPO" UPSTREAM_COMMIT="$UPSTREAM_COMMIT" bash << 'BUILDSCRIPT'
           set -euo pipefail
           WORK="/tmp/${VID}"
+          FEATURES_YAML="$GITHUB_WORKSPACE/versions/${VID}/patches/features.yaml"
+          PATCH_DIR="$GITHUB_WORKSPACE/versions/${VID}/patches"
           mkdir -p "$WORK" "$GITHUB_WORKSPACE/artifacts/${VID}"
-          cd "$WORK"
 
-          # 1) shallow clone upstream + 拉 tag
-          if [ ! -d "upstream/.git" ]; then
-            git clone --depth 1 "$UPSTREAM_REPO" upstream 2>&1 | tail -3
-          fi
-
-          # 2) fetch target commit (按 SHA 单 commit 深 fetch 兜底)
-          cd upstream
-          if ! git cat-file -t "$UPSTREAM_COMMIT" >/dev/null 2>&1; then
-            git fetch --depth 1 origin "$UPSTREAM_COMMIT" 2>&1 | tail -1 || true
-          fi
-          git checkout -q "$UPSTREAM_COMMIT"
-          echo "upstream HEAD: $(git rev-parse --short HEAD)"
-          cd ..
-
-          # 3) 按 series apply
-          SERIES="$GITHUB_WORKSPACE/versions/${VID}/patches/series"
-          mapfile -t ENTRIES < <(grep -vE '^\s*(#|$)' "$SERIES")
-          echo "apply ${#ENTRIES[@]} patches from series..."
-          ok=0; warn=0
-          for p in "${ENTRIES[@]}"; do
-            p=$(echo "$p" | sed 's/[[:space:]]*$//')
-            [ -z "$p" ] && continue
-            if (cd upstream && git apply "$GITHUB_WORKSPACE/versions/${VID}/patches/$p"); then
-              echo "  ✓ $p"
-              ok=$((ok+1))
-            else
-              echo "  ⚠ $p: apply 失败(已知 stack rebase 残留,不影响 merge)"
-              warn=$((warn+1))
-            fi
-          done
-          echo "apply summary: ✓ $ok / ⚠ $warn"
+          echo "→ v5.0 apply_patch.sh --features: $FEATURES_YAML"
+          echo "  ACTIVE_FEATURES=<features.yaml defaults>"
+          bash "$GITHUB_WORKSPACE/tools/apply_patch.sh" \
+              "$UPSTREAM_REPO" "$UPSTREAM_COMMIT" \
+              --features "$FEATURES_YAML" \
+              "$PATCH_DIR" "$WORK" || {
+            rc=$?
+            echo "  ⚠ apply 退出 rc=$rc(已知 stack rebase 残留,不影响 merge)"
+            echo "  ⚠ 真 Kunpeng runner 上 rc=0 才算通过"
+            exit $rc
+          }
+          echo "apply summary: 全部 apply 成功"
           BUILDSCRIPT
 
       # --- (would-be) Step 4: make patched redis ---
@@ -183,9 +168,9 @@ jobs:
       - name: "[skeleton] Run memtier_benchmark"
         run: |
           echo "::group::[skeleton] redis-server + redis-benchmark -q"
-          echo "  src/redis-server --port \$REDIS_PORT --daemonize yes \\"
+          echo "  src/redis-server --port \$REDIS_PORT --daemonize yes \"
           echo "    --save '' --appendonly no --maxmemory 256mb --maxmemory-policy allkeys-random"
-          echo "  src/redis-benchmark -h 127.0.0.1 -p \$REDIS_PORT \\"
+          echo "  src/redis-benchmark -h 127.0.0.1 -p \$REDIS_PORT \"
           echo "    -c 200 -d 3 -n 10000000 -r 10000000 -t set,get --threads 20 -q"
           echo "  python3 parse → summary.md (SETs/GETs ops/sec table)"
           echo "::endgroup::"
@@ -202,7 +187,7 @@ jobs:
             echo "|---|---|"
             echo "| Install deps | skeleton: 打印 apt-get + memtier clone 命令,未执行 |"
             echo "| Cache upstream | skeleton: 打印 cache key/path,未实际缓存 |"
-            echo "| Apply series | **实际执行**:clean clone + git apply 全部 series entry |"
+            echo "| Apply features (v5.0) | **实际执行**:clean clone + apply_patch.sh --features(inline compose) |"
             echo "| Build patched redis | skeleton: 打印 make 命令,KRAIO 依赖只在 Kunpeng 机器 |"
             echo "| Run memtier_benchmark | skeleton: 打印 redis-server + benchmark 命令 |"
             echo

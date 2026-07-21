@@ -5,9 +5,9 @@
 #   1. 仓根禁放检查(防误提交 upstream 源码/Dockerfile/Makefile 等)
 #   2. versions/<v>/upstream.yaml schema(Yocto recipe 字段 + 上游 pin 校验)
 #   3. 干净 upstream apply:委托给 tools/apply_patch.sh
-#      (Buildroot/OpenWrt 风格的 series 应用器,单点实现)
+#      (Buildroot/OpenWrt 风格的 series 应用器 + v5.0 --features mode)
 #   4. 派生 inventory.json 刷新(委托 tools/gen_inventory.py)
-#      (gitignored,确保与 patch 头 + series 同步)
+#      (gitignored,确保与 patch 头 + features.yaml 同步)
 #
 # 用法: bash tools/verify.sh
 # 环境变量:
@@ -44,14 +44,14 @@ done
 errs=$((errs+root_bad))
 
 # === 2 + 3. versions/<v>/upstream.yaml schema + clean apply ===
-echo "--- upstream.yaml 校验 + series apply ---"
+echo "--- upstream.yaml 校验 + feature apply ---"
 vcount=0
 
 for vdir in versions/*/; do
     [ -d "$vdir" ] || continue
     vname=$(basename "$vdir")
     uyaml="$vdir/upstream.yaml"
-    series_file="$vdir/patches/series"
+    features_yaml="$vdir/patches/features.yaml"
     patches_dir="$vdir/patches"
 
     if [ ! -f "$uyaml" ]; then
@@ -59,8 +59,8 @@ for vdir in versions/*/; do
         errs=$((errs+1))
         continue
     fi
-    if [ ! -f "$series_file" ]; then
-        echo "  ✗ $vname: 缺 patches/series"
+    if [ ! -f "$features_yaml" ]; then
+        echo "  ✗ $vname: 缺 patches/features.yaml"
         errs=$((errs+1))
         continue
     fi
@@ -140,20 +140,23 @@ PYEOF
     SHA=$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['commit'])" "$read_vars")
     VERSION=$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['version'])" "$read_vars")
 
-    # 读 series(过滤空行 + # 注释)
-    mapfile -t series_entries < <(grep -vE '^\s*(#|$)' "$series_file")
-    if [ "${#series_entries[@]}" = "0" ]; then
-        echo "  ⚠ $vname: series 为空(0 条 patch,跳过 apply 验证)"
-        vcount=$((vcount+1))
-        continue
-    fi
+    # 列出默认激活的 feature(给 stdout 反馈)
+    default_active=$(python3 - "$features_yaml" <<'PYEOF'
+import sys, yaml
+data = yaml.safe_load(open(sys.argv[1]))
+feats = data.get("features", {}) or {}
+print(" ".join(n for n, f in feats.items() if f.get("default", False)))
+PYEOF
+    )
 
-    echo "  ✓ $vname: upstream @ $VERSION ($SHA), series ${#series_entries[@]} 条"
+    echo "  ✓ $vname: upstream @ $VERSION ($SHA), default features: ${default_active:-<none>}"
 
-    # === 3. 委托 tools/apply_patch.sh(单点实现)===
+    # === 3. 委托 tools/apply_patch.sh(单点实现,v5.0 --features 模式)===
     WORK=$(mktemp -d)
     if bash "$ROOT/tools/apply_patch.sh" \
-        "$REPO" "$SHA" "$series_file" "$patches_dir" "$WORK" 2>&1 | sed 's/^/    /'; then
+        "$REPO" "$SHA" \
+        --features "$features_yaml" \
+        "$patches_dir" "$WORK" 2>&1 | sed 's/^/    /'; then
         : # 成功
     else
         rc=$?
