@@ -84,7 +84,7 @@ meta:
 ```yaml
 # Industry reference: OpenWrt package/<name>/Config.in + Kconfig depends + Yocto conditional SRC_URI
 features:
-  feature-A:
+  kunpeng-hw-accel:
     title: "Kunpeng ARM HW acceleration (io_uring adapt + DTOE DMA network path)"
     patches:
       - 0001-hw-kunpeng-adapt-iouring.patch
@@ -94,13 +94,13 @@ features:
     upstream_status_summary:
       Submitted: 1
       Inappropriate: 1
-  feature-B:
+  jemalloc-arm64:
     title: "jemalloc ARM64 pointer-tag + GC decay strategy"
     patches:
       - 0001-perf-jemalloc-arm64-pointer-tag-and-gc.patch
     depends: []
     default: false                               # not enabled by default
-  feature-C:
+  rdb-aof-fallback:
     title: "AOF fallback when RDB corrupted"
     patches:
       - 0001-perf-rdb-fallback-aof.patch
@@ -112,12 +112,12 @@ Physical patches are organized by feature:
 
 ```text
 versions/redis-7.0.15/patches/features/
-├── feature-A/
+├── kunpeng-hw-accel/
 │   ├── 0001-hw-kunpeng-adapt-iouring.patch
 │   └── 0002-perf-kunpeng-adapt-dtoe.patch
-├── feature-B/
+├── jemalloc-arm64/
 │   └── 0001-perf-jemalloc-arm64-pointer-tag-and-gc.patch
-└── feature-C/
+└── rdb-aof-fallback/
     └── 0001-perf-rdb-fallback-aof.patch
 ```
 
@@ -140,7 +140,7 @@ python3 .github/lint_series.py versions/*/patches/
 Pick a feature subset via `ACTIVE_FEATURES` (env var) or `--active` (CLI flag):
 
 ```bash
-# Default combo = union of features.yaml `default:true` (here: feature-A + feature-C)
+# Default combo = union of features.yaml `default:true` (here: kunpeng-hw-accel + rdb-aof-fallback)
 bash tools/apply_patch.sh \
     https://github.com/redis/redis \
     f35f36a265403c07b119830aa4bb3b7d71653ec9 \
@@ -148,22 +148,22 @@ bash tools/apply_patch.sh \
     versions/redis-7.0.15/patches \
     /tmp/build
 
-# Customer A: reliability-only (just feature-C)
-ACTIVE_FEATURES="feature-C" bash tools/apply_patch.sh \
+# Customer A: reliability-only (just rdb-aof-fallback)
+ACTIVE_FEATURES="rdb-aof-fallback" bash tools/apply_patch.sh \
     https://github.com/redis/redis \
     f35f36a265403c07b119830aa4bb3b7d71653ec9 \
     --features versions/redis-7.0.15/patches/features.yaml \
     versions/redis-7.0.15/patches \
     /tmp/build-a
 
-# Customer B: full bundle (also enables default-off feature-B)
-ACTIVE_FEATURES="feature-A feature-B feature-C" bash tools/apply_patch.sh ... --features ... /tmp/build-b
+# Customer B: full bundle (also enables default-off jemalloc-arm64)
+ACTIVE_FEATURES="kunpeng-hw-accel jemalloc-arm64 rdb-aof-fallback" bash tools/apply_patch.sh ... --features ... /tmp/build-b
 
 # Equivalent --active flag (better for CI / tests)
-bash tools/apply_patch.sh ... --features ... --active "feature-B feature-C" /tmp/build-c
+bash tools/apply_patch.sh ... --features ... --active "jemalloc-arm64 rdb-aof-fallback" /tmp/build-c
 ```
 
-The `depends` field makes features auto-include their dependencies (e.g. if `feature-C.depends=[feature-A]`,
+The `depends` field makes features auto-include their dependencies (e.g. if `rdb-aof-fallback.depends=[kunpeng-hw-accel]`,
 activating C automatically applies A first).
 
 See [docs/version-yaml-spec.md §3](./docs/version-yaml-spec.md#3-patchesfeaturesyamlopenwrt-configin-style--v50-single-source).
@@ -212,7 +212,7 @@ make distclean && make -j$(nproc) -DHAVE_KRAIO
 - **Industry alignment quick reference (schema + tooling)**: [docs/version-yaml-spec.md §7](./docs/version-yaml-spec.md#7-与业界对齐速查)
 - **Operations (add/retire patch)**: [docs/governance.md §4](./docs/governance.md#4-common-operations)
 
-Industry references (5-way alignment + 1 repo extension):
+Industry references (5-way, simplified to pure 5 since v5.1):
 - **Yocto/OpenEmbedded** — recipe fields (SUMMARY/LICENSE/HOMEPAGE/LIC_FILES_CHKSUM/SECTION) +
   `Upstream-Status` 8-state semantics
 - **DEP-3** (Debian) — patch header schema with 6 required fields
@@ -247,6 +247,12 @@ PR-only workflow. No direct pushes to master.
 
 ## Change Log
 
+- **2026-07-21** v5.2: feature dirs renamed from abstract letters
+  (`feature-A` / `feature-B` / `feature-C`) to descriptive kebab-case names
+  (`kunpeng-hw-accel` / `jemalloc-arm64` / `rdb-aof-fallback`) per industry
+  naming conventions (OpenWrt `package/network/services/dnsmasq/`, Buildroot
+  `package/redis/`, Yocto `recipes-core/redis/`). `features.yaml` keys + all
+  docs + `apply_patch.sh` usage example aligned.
 - **2026-07-21** v5.1: remove `tools/gen_inventory.py` + `inventory.json` derived
   pipeline (user feedback: gitignored + CI `--check` is a tautology, low value).
   `tools/` reduced to 2 scripts; CI to 3 steps; `.gitignore` loses the inventory.json

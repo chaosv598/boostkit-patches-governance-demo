@@ -82,7 +82,7 @@ Examples:
       versions/redis-7.0.15/patches /tmp/build
 
   # Feature 模式(显式 active,环境变量或 --active)
-  ACTIVE_FEATURES="feature-A feature-B" apply_patch.sh \
+  ACTIVE_FEATURES="kunpeng-hw-accel jemalloc-arm64" apply_patch.sh \
       https://github.com/redis/redis f35f36... \
       --features versions/redis-7.0.15/patches/features.yaml \
       versions/redis-7.0.15/patches /tmp/build

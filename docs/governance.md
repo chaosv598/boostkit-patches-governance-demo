@@ -133,7 +133,7 @@ config PACKAGE_FOO_FEATURE_A
 
 # OpenWrt package/foo/Makefile
 ifeq ($(CONFIG_PACKAGE_FOO_FEATURE_A),y)
-    PATCHFILES += 0001-feature-A.patch 0002-feature-A.patch
+    PATCHFILES += 0001-kunpeng-hw-accel.patch 0002-kunpeng-hw-accel.patch
 endif
 ```
 
@@ -177,12 +177,12 @@ Linux kernel 用 Kconfig 表达"配置项之间依赖",核心语义:
 versions/redis-7.0.15/patches/
 ├── features.yaml            # ★ 单一权威(OpenWrt Config.in 的 YAML 等价)
 └── features/                # 一特性一目录(物理组织)
-    ├── feature-A/           # Kunpeng ARM HW 优化
+    ├── kunpeng-hw-accel/           # Kunpeng ARM HW 优化
     │   ├── 0001-...patch
     │   └── 0002-...patch
-    ├── feature-B/           # jemalloc 性能
+    ├── jemalloc-arm64/           # jemalloc 性能
     │   └── 0001-...patch
-    └── feature-C/           # 可靠性(AOF fallback)
+    └── rdb-aof-fallback/           # 可靠性(AOF fallback)
         └── 0001-...patch
 ```
 
@@ -195,8 +195,8 @@ bash tools/apply_patch.sh \
     versions/redis-7.0.15/patches /tmp/build
 
 # 显式组合(环境变量或 --active)
-ACTIVE_FEATURES="feature-A feature-C" bash tools/apply_patch.sh ... --features ... /tmp/build
-bash tools/apply_patch.sh ... --features ... --active "feature-B feature-C" /tmp/build
+ACTIVE_FEATURES="kunpeng-hw-accel rdb-aof-fallback" bash tools/apply_patch.sh ... --features ... /tmp/build
+bash tools/apply_patch.sh ... --features ... --active "jemalloc-arm64 rdb-aof-fallback" /tmp/build
 ```
 
 **lint 规则**(`.github/lint_series.py`,v5.0 起改为 lint features.yaml):
@@ -309,7 +309,7 @@ src/redis-benchmark -p 6399 -c 200 -d 3 -n 10000000 -r 10000000 \
 
 ```bash
 # 1. 把 .patch 文件放到对应 feature 子目录
-cp my-new.patch versions/redis-7.0.15/patches/features/feature-A/0003-my-new.patch
+cp my-new.patch versions/redis-7.0.15/patches/features/kunpeng-hw-accel/0003-my-new.patch
 
 # 2. 编辑 DEP-3 邮件式头,必填 6 字段:
 #    Description (≥20 字符)/ Origin / Upstream-Status / Applies-To / Maintainer / Last-Update
@@ -318,7 +318,7 @@ cp my-new.patch versions/redis-7.0.15/patches/features/feature-A/0003-my-new.pat
 
 # 3. 在 versions/redis-7.0.15/patches/features.yaml 里
 #    把新 patch 加入对应 feature 的 patches: 列表
-sed -i '/feature-A:/,/^  [a-z]/ s|^      - 0002-perf-kunpeng-adapt-dtoe.patch$|      - 0002-perf-kunpeng-adapt-dtoe.patch\n      - 0003-my-new.patch|' \
+sed -i '/kunpeng-hw-accel:/,/^  [a-z]/ s|^      - 0002-perf-kunpeng-adapt-dtoe.patch$|      - 0002-perf-kunpeng-adapt-dtoe.patch\n      - 0003-my-new.patch|' \
     versions/redis-7.0.15/patches/features.yaml
 
 # 4. 本地 3 工具全 rc=0
@@ -384,7 +384,7 @@ cat >> versions/redis-7.0.15/patches/features.yaml <<'EOF'
     title: "新特性(示例)"
     patches:
       - 0001-my-new.patch
-    depends: [feature-A]               # 可选,若需要 feature-A 先 apply
+    depends: [kunpeng-hw-accel]               # 可选,若需要 kunpeng-hw-accel 先 apply
     default: false                     # 默认不激活,客户显式 ACTIVE_FEATURES 选
     upstream_status_summary:
       Submitted: 1
@@ -395,7 +395,7 @@ bash tools/verify.sh
 python3 .github/lint_series.py versions/redis-7.0.15/patches/
 
 # 5. 用新 feature 跑 apply_patch.sh(默认组合不变,显式 ACTIVE 启用)
-ACTIVE_FEATURES="feature-A feature-C feature-D" bash tools/apply_patch.sh \
+ACTIVE_FEATURES="kunpeng-hw-accel rdb-aof-fallback feature-D" bash tools/apply_patch.sh \
   https://github.com/redis/redis \
   f35f36a265403c07b119830aa4bb3b7d71653ec9 \
   --features versions/redis-7.0.15/patches/features.yaml \

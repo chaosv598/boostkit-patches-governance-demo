@@ -84,7 +84,7 @@ meta:
 ```yaml
 # 业界参照:OpenWrt package/<name>/Config.in + Kconfig depends + Yocto 条件 SRC_URI
 features:
-  feature-A:
+  kunpeng-hw-accel:
     title: "Kunpeng ARM 硬件加速(io_uring 适配 + DTOE DMA 网络路径)"
     patches:
       - 0001-hw-kunpeng-adapt-iouring.patch
@@ -94,13 +94,13 @@ features:
     upstream_status_summary:
       Submitted: 1
       Inappropriate: 1
-  feature-B:
+  jemalloc-arm64:
     title: "jemalloc ARM64 pointer-tag + GC decay 策略优化"
     patches:
       - 0001-perf-jemalloc-arm64-pointer-tag-and-gc.patch
     depends: []
     default: false                               # 默认不激活
-  feature-C:
+  rdb-aof-fallback:
     title: "RDB 损坏时降级到 AOF,避免硬停服"
     patches:
       - 0001-perf-rdb-fallback-aof.patch
@@ -112,12 +112,12 @@ features:
 
 ```text
 versions/redis-7.0.15/patches/features/
-├── feature-A/
+├── kunpeng-hw-accel/
 │   ├── 0001-hw-kunpeng-adapt-iouring.patch
 │   └── 0002-perf-kunpeng-adapt-dtoe.patch
-├── feature-B/
+├── jemalloc-arm64/
 │   └── 0001-perf-jemalloc-arm64-pointer-tag-and-gc.patch
-└── feature-C/
+└── rdb-aof-fallback/
     └── 0001-perf-rdb-fallback-aof.patch
 ```
 
@@ -137,10 +137,10 @@ python3 .github/lint_series.py versions/*/patches/
 
 ### 2.5 Feature 组合(同一 upstream 多特性组合)
 
-需要只 apply 部分 feature 时(例:客户只要 feature-C 可靠性),用 `ACTIVE_FEATURES`:
+需要只 apply 部分 feature 时(例:客户只要 rdb-aof-fallback 可靠性),用 `ACTIVE_FEATURES`:
 
 ```bash
-# 默认组合 = features.yaml 中 default:true 的并集(本仓 = feature-A + feature-C)
+# 默认组合 = features.yaml 中 default:true 的并集(本仓 = kunpeng-hw-accel + rdb-aof-fallback)
 bash tools/apply_patch.sh \
     https://github.com/redis/redis \
     f35f36a265403c07b119830aa4bb3b7d71653ec9 \
@@ -148,22 +148,22 @@ bash tools/apply_patch.sh \
     versions/redis-7.0.15/patches \
     /tmp/build
 
-# 客户 A:只要 feature-C 可靠性
-ACTIVE_FEATURES="feature-C" bash tools/apply_patch.sh \
+# 客户 A:只要 rdb-aof-fallback 可靠性
+ACTIVE_FEATURES="rdb-aof-fallback" bash tools/apply_patch.sh \
     https://github.com/redis/redis \
     f35f36a265403c07b119830aa4bb3b7d71653ec9 \
     --features versions/redis-7.0.15/patches/features.yaml \
     versions/redis-7.0.15/patches \
     /tmp/build-a
 
-# 客户 B:全开(包括默认不激活的 feature-B)
-ACTIVE_FEATURES="feature-A feature-B feature-C" bash tools/apply_patch.sh ... --features ... /tmp/build-b
+# 客户 B:全开(包括默认不激活的 jemalloc-arm64)
+ACTIVE_FEATURES="kunpeng-hw-accel jemalloc-arm64 rdb-aof-fallback" bash tools/apply_patch.sh ... --features ... /tmp/build-b
 
 # 等价的 --active 参数(便于 CI / 测试传参)
-bash tools/apply_patch.sh ... --features ... --active "feature-B feature-C" /tmp/build-c
+bash tools/apply_patch.sh ... --features ... --active "jemalloc-arm64 rdb-aof-fallback" /tmp/build-c
 ```
 
-`depends` 字段让 feature 自动 include 依赖项(例:feature-C.depends=[feature-A] 时,
+`depends` 字段让 feature 自动 include 依赖项(例:rdb-aof-fallback.depends=[kunpeng-hw-accel] 时,
 激活 C 会自动先 apply A)。
 
 业界出处:OpenWrt `package/<name>/Config.in`(bool + depends + default)+ Linux kernel `Kconfig` + Yocto 条件 SRC_URI。
@@ -214,7 +214,7 @@ make distclean && make -j$(nproc) -DHAVE_KRAIO
 - **业界对齐速查表(schema + 工具)**:[docs/version-yaml-spec.md §7](./docs/version-yaml-spec.md#7-与业界对齐速查)
 - **操作步骤(新增/废弃 patch 等)**:[docs/governance.md §4](./docs/governance.md#4-常见操作)
 
-业界出处(5 家 + 1 项本仓扩展):
+业界出处(5 家,v5.1 起纯 5 家已简并):
 - **Yocto/OpenEmbedded** — recipe 字段(SUMMARY/LICENSE/HOMEPAGE/LIC_FILES_CHKSUM/SECTION)+ `Upstream-Status` 8 状态
 - **DEP-3** (Debian) — patch 头 schema + 6 必填字段
 - **Buildroot** `apply-patches.sh` — series 应用器单点实现
@@ -245,6 +245,11 @@ make distclean && make -j$(nproc) -DHAVE_KRAIO
 
 ## 变更通知
 
+- **2026-07-21** v5.2:feature 目录从抽象字母命名(`feature-A` / `feature-B` / `feature-C`)
+  改为业界 kebab-case 描述名(`kunpeng-hw-accel` / `jemalloc-arm64` / `rdb-aof-fallback`),
+  对齐 OpenWrt `package/network/services/dnsmasq/`、Buildroot `package/redis/`、
+  Yocto `recipes-core/redis/` 等业界命名惯例。`features.yaml` key + 全文档 +
+  `apply_patch.sh` 用法示例同步更新。
 - **2026-07-21** v5.1:删除 `tools/gen_inventory.py` + `inventory.json` 派生体系
   (用户反馈:gitignored 派生 + CI 上 `--check` 是同义反复,价值有限)。`tools/`
   减为 2 个脚本;CI 减为 3 步;`.gitignore` 移除 inventory.json 行。

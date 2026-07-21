@@ -126,7 +126,7 @@ meta:
 # 业界参照:OpenWrt package/<name>/Config.in + Yocto 条件 SRC_URI
 features:
 
-  feature-A:
+  kunpeng-hw-accel:
     title: "Kunpeng ARM 硬件加速(io_uring 适配 + DTOE DMA 网络路径)"
     patches:
       - 0001-hw-kunpeng-adapt-iouring.patch
@@ -137,7 +137,7 @@ features:
       Submitted: 1
       Inappropriate: 1
 
-  feature-B:
+  jemalloc-arm64:
     title: "jemalloc ARM64 pointer-tag + GC decay 策略优化"
     patches:
       - 0001-perf-jemalloc-arm64-pointer-tag-and-gc.patch
@@ -146,11 +146,11 @@ features:
     upstream_status_summary:
       Submitted: 1
 
-  feature-C:
+  rdb-aof-fallback:
     title: "RDB 损坏时降级到 AOF,避免硬停服"
     patches:
       - 0001-perf-rdb-fallback-aof.patch
-    depends: []               # 若 depends: [feature-A] 则激活 C 时自动 include A
+    depends: []               # 若 depends: [kunpeng-hw-accel] 则激活 C 时自动 include A
     default: true
     upstream_status_summary:
       Submitted: 1
@@ -172,12 +172,12 @@ features:
 patches/
 ├── features.yaml                 # ★ 单一权威
 ├── features/                     # 一特性一目录
-│   ├── feature-A/
+│   ├── kunpeng-hw-accel/
 │   │   ├── 0001-hw-kunpeng-adapt-iouring.patch
 │   │   └── 0002-perf-kunpeng-adapt-dtoe.patch
-│   ├── feature-B/
+│   ├── jemalloc-arm64/
 │   │   └── 0001-perf-jemalloc-arm64-pointer-tag-and-gc.patch
-│   └── feature-C/
+│   └── rdb-aof-fallback/
 │       └── 0001-perf-rdb-fallback-aof.patch
 
 ```
@@ -191,21 +191,21 @@ patches/
 **显式组合** = 环境变量 `ACTIVE_FEATURES="<空格分隔的 feature 名>"` 或 `--active` 参数。
 
 ```bash
-# 默认组合(feature-A + feature-C)
+# 默认组合(kunpeng-hw-accel + rdb-aof-fallback)
 bash tools/apply_patch.sh \
     https://github.com/redis/redis \
     f35f36a265403c07b119830aa4bb3b7d71653ec9 \
     --features versions/redis-7.0.15/patches/features.yaml \
     versions/redis-7.0.15/patches /tmp/build
 
-# 客户 A:只要 feature-C
-ACTIVE_FEATURES="feature-C" bash tools/apply_patch.sh ... --features ... /tmp/build-a
+# 客户 A:只要 rdb-aof-fallback
+ACTIVE_FEATURES="rdb-aof-fallback" bash tools/apply_patch.sh ... --features ... /tmp/build-a
 
 # 客户 B:全开
-ACTIVE_FEATURES="feature-A feature-B feature-C" bash tools/apply_patch.sh ... /tmp/build-b
+ACTIVE_FEATURES="kunpeng-hw-accel jemalloc-arm64 rdb-aof-fallback" bash tools/apply_patch.sh ... /tmp/build-b
 
 # --active 参数等价于 ACTIVE_FEATURES 环境变量
-bash tools/apply_patch.sh ... --features ... --active "feature-B feature-C" /tmp/build-c
+bash tools/apply_patch.sh ... --features ... --active "jemalloc-arm64 rdb-aof-fallback" /tmp/build-c
 ```
 
 ### 3.5 依赖解析(`depends`)
@@ -217,14 +217,14 @@ bash tools/apply_patch.sh ... --features ... --active "feature-B feature-C" /tmp
 4. 校验每个 patch 物理存在
 
 ```text
-# 例:feature-C 依赖 feature-A
-ACTIVE_FEATURES="feature-C"
-  → resolved: [feature-A, feature-C]   # A 自动 include 并排前面
-  → patches: [features/feature-A/0001..., features/feature-C/0001...]
+# 例:rdb-aof-fallback 依赖 kunpeng-hw-accel
+ACTIVE_FEATURES="rdb-aof-fallback"
+  → resolved: [kunpeng-hw-accel, rdb-aof-fallback]   # A 自动 include 并排前面
+  → patches: [features/kunpeng-hw-accel/0001..., features/rdb-aof-fallback/0001...]
 
 # 例:环依赖
-feature-A.depends: [feature-B]
-feature-B.depends: [feature-A]
+kunpeng-hw-accel.depends: [jemalloc-arm64]
+jemalloc-arm64.depends: [kunpeng-hw-accel]
   → compose 失败:环依赖: A -> B -> A
 ```
 

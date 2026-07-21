@@ -1,12 +1,13 @@
 # features.yaml —— redis-7.0.15 特性声明
 #
-# 业界参照:
-#   - OpenWrt package/<name>/Config.in  (bool 选项 + depends + default)
-#   - Yocto   recipes-*/<pkg>.bbappend   (条件 SRC_URI)
-#   - Kconfig (Linux kernel)             (depends / select)
+# 业界参照(命名惯例):
+#   - OpenWrt  package/network/services/dnsmasq/          (kebab-case 描述名)
+#   - Buildroot package/redis/                             (kebab-case 描述名)
+#   - Yocto    recipes-core/redis/redis_7.0.15.bb          (kebab-case / snake_case)
+#   - Kconfig  CONFIG_NETFILTER                           (UPPER_SNAKE,本仓 feature 仍用 kebab-case 跟目录一致)
 #
-# apply_patch.sh --features 本文件 [--active "feature-A feature-C"] 自动 compose series
-# 单一真相;patches/<feature>/<patch>.patch 是物理 patch
+# apply_patch.sh --features 本文件 [--active "kunpeng-hw-accel rdb-aof-fallback"]
+# 自动 compose series。单一真相;patches/<feature>/<patch>.patch 是物理 patch
 #
 # 字段说明:
 #   title           一句话描述
@@ -19,17 +20,18 @@
 #   bash tools/apply_patch.sh <repo> <sha> \
 #       --features versions/redis-7.0.15/patches/features.yaml \
 #       versions/redis-7.0.15/patches /tmp/build
-#   # 默认组合 = feature-A + feature-C
+#   # 默认组合 = kunpeng-hw-accel + rdb-aof-fallback
 #
-#   ACTIVE_FEATURES="feature-A feature-B" bash tools/apply_patch.sh <repo> <sha> \
+#   ACTIVE_FEATURES="kunpeng-hw-accel jemalloc-arm64" bash tools/apply_patch.sh \
+#       <repo> <sha> \
 #       --features versions/redis-7.0.15/patches/features.yaml \
 #       versions/redis-7.0.15/patches /tmp/build
-#   # 客户只要 feature-A + feature-B(无 C)
+#   # 客户只要 hw + jemalloc(无 aof-fallback)
 
 features:
 
-  # ─── feature-A: Kunpeng ARM 硬件加速特性 ───
-  feature-A:
+  # ─── Kunpeng ARM 硬件加速(io_uring + DTOE DMA 网络路径)───
+  kunpeng-hw-accel:
     title: "Kunpeng ARM 硬件加速(io_uring 适配 + DTOE DMA 网络路径)"
     patches:
       - 0001-hw-kunpeng-adapt-iouring.patch
@@ -40,8 +42,8 @@ features:
       Submitted: 1
       Inappropriate: 1
 
-  # ─── feature-B: 通用性能优化(jemalloc) ───
-  feature-B:
+  # ─── jemalloc ARM64 pointer-tag + GC decay 策略优化 ───
+  jemalloc-arm64:
     title: "jemalloc ARM64 pointer-tag + GC decay 策略优化"
     patches:
       - 0001-perf-jemalloc-arm64-pointer-tag-and-gc.patch
@@ -50,8 +52,8 @@ features:
     upstream_status_summary:
       Submitted: 1
 
-  # ─── feature-C: 可靠性增强(AOF fallback) ───
-  feature-C:
+  # ─── RDB 损坏时降级到 AOF,避免硬停服 ───
+  rdb-aof-fallback:
     title: "RDB 损坏时降级到 AOF,避免硬停服"
     patches:
       - 0001-perf-rdb-fallback-aof.patch
@@ -63,10 +65,10 @@ features:
   # ─── 业务组合示例(供运维参考,实际由 ACTIVE_FEATURES 决定) ───
   #
   # 安全合规客户(只跑稳定性 + 通用 HW):
-  #   ACTIVE_FEATURES="feature-A feature-C"
+  #   ACTIVE_FEATURES="kunpeng-hw-accel rdb-aof-fallback"
   #
   # 性能极限客户(全开):
-  #   ACTIVE_FEATURES="feature-A feature-B feature-C"
+  #   ACTIVE_FEATURES="kunpeng-hw-accel jemalloc-arm64 rdb-aof-fallback"
   #
   # 通用云服务客户(默认):
-  #   ACTIVE_FEATURES="feature-A feature-C"
+  #   ACTIVE_FEATURES="kunpeng-hw-accel rdb-aof-fallback"
