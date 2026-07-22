@@ -43,8 +43,7 @@ boostkit-patches-governance-demo/
 │   └── apply_patch.sh                   # ★ Buildroot-style series applier + v5.0 --features mode (inline compose)
 ├── docs/
 │   ├── governance.md                    # ★ Design rationale + 5 industry references
-│   ├── schemas.md                       # ★ Authoritative field definitions (3 schemas)
-│   ├── version-yaml-spec.md             # Detailed field guide (schemas.md is authoritative)
+│   ├── schemas.md                       # ★ Authoritative field definitions (single source)
 │   └── (product guides zh/en retained)
 └── versions/
     └── <upstream-id>/                   # e.g. redis-7.0.15
@@ -175,7 +174,7 @@ Dual industry backing for `depends`:
 - **Linux kernel Kconfig** `depends on` (same DFS depth-first resolution + cycle hard-fail)
 - **OpenWrt** `package/<name>/Makefile` conditional `PATCHFILES` (only enters build when dependency active)
 See [docs/governance.md §2.5](./docs/governance.md#25-linux-kernel-kconfig--depends--select--default-semantics)
-+ [docs/version-yaml-spec.md §3](./docs/version-yaml-spec.md#3-patchesfeaturesyamlopenwrt-configin-style--v50-single-source).
++ [docs/schemas.md §3](./docs/schemas.md#3-versionsidpatchesfeaturesyamlper-version).
 
 ### 2.6 Standalone feature apply (Buildroot-style)
 
@@ -217,7 +216,7 @@ make distclean && make -j$(nproc) -DHAVE_KRAIO
 
 - **Design + industry alignment**: [docs/governance.md](./docs/governance.md)
 - **Field definitions**: [docs/schemas.md](./docs/schemas.md)
-- **Detailed field guide**: [docs/version-yaml-spec.md](./docs/version-yaml-spec.md) (schemas.md is authoritative)
+- **Field definitions**: [docs/schemas.md](./docs/schemas.md) (single source)
 - **Tooling → industry reference mapping**: [docs/governance.md §2.7](./docs/governance.md#27-tools-工具脚本--业界出处对照表)
 - **Operations (add/retire patch)**: [docs/governance.md §4](./docs/governance.md#4-common-operations)
 

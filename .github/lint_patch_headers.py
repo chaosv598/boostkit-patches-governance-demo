@@ -9,7 +9,7 @@ lint_patch_headers —— 校验每个 .patch 文件的 DEP-3 邮件式头 schem
     https://docs.yoctoproject.org/dev/dev-manual/common-tasks.html#patches
   - git format-patch 邮件式头(From/Date/Subject/Signed-off-by)
 
-校验规则(完整规范见 docs/version-yaml-spec.md §4):
+校验规则(完整规范见 docs/schemas.md §1):
   必填 6 字段 (用户要求):
     Description     - 目的/Description (DEP-3 标准字段)
     Origin          - 来源 (DEP-3 扩展;记 PR/URL/内部)

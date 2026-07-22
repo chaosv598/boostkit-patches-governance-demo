@@ -32,7 +32,7 @@ DEP3_REQUIRED = ("Description", "Origin", "Upstream-Status", "Applies-To", "Main
 
 # Yocto/OpenEmbedded Upstream-Status 8 状态枚举
 # 参照:https://docs.openembedded.org/arch-current/contributor-guide/recipe-style-guide.html
-# 对应 docs/version-yaml-spec.md §4.5
+# 对应 docs/schemas.md §1.3
 YOCTO_UPSTREAM_STATES = frozenset({
     "Pending",
     "Submitted",

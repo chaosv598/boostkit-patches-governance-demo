@@ -1,6 +1,6 @@
 # Patch overlay CI —— v5.0 模型(v5.1 起 3 步)
 #
-# 流程 (按 docs/version-yaml-spec.md + docs/governance.md):
+# 流程 (按 docs/schemas.md + docs/governance.md):
 #   1. tools/verify.sh        —— 仓根禁放 + upstream.yaml schema + clean clone + features.yaml compose + apply
 #   2. .github/lint_patch_headers.py —— patch 邮件式头 schema 校验
 #   3. .github/lint_series.py —— features.yaml schema + depends 解析 + DEP-3 必填字段(v5.0 替代 v4.0 的 series 一致性)

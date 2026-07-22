@@ -43,8 +43,7 @@ boostkit-patches-governance-demo/
 │   └── apply_patch.sh                   # ★ Buildroot 风格 series 应用器 + v5.0 --features 模式(inline compose)
 ├── docs/
 │   ├── governance.md                    # ★ 设计原理 + 5 家业界出处
-│   ├── schemas.md                       # ★ 三类 YAML/header 字段权威定义
-│   ├── version-yaml-spec.md             # 详细字段说明(以 schemas.md 为准)
+│   ├── schemas.md                       # ★ 三类 YAML/header 字段权威定义(单一权威)
 │   └── (产品指南 zh/en 保留)
 └── versions/
     └── <upstream-id>/                   # 例如 redis-7.0.15
@@ -175,7 +174,7 @@ bash tools/apply_patch.sh ... --features ... --active "jemalloc-arm64 rdb-aof-fa
 - **Linux kernel Kconfig** `depends on`(同款 DFS 深度优先解析 + 环依赖 hard-fail)
 - **OpenWrt** `package/<name>/Makefile` 条件 `PATCHFILES`(依赖激活后才进 build)
 详见 [docs/governance.md §2.5](./docs/governance.md#25-linux-kernel-kconfig--depends--select--default-语义)
-+ [docs/version-yaml-spec.md §3](./docs/version-yaml-spec.md#3-patchesfeaturesyamlopenwrt-configin-风格--v50-单一权威)。
++ [docs/schemas.md §3](./docs/schemas.md#3-versionsidpatchesfeaturesyamlper-version)。
 
 ### 2.6 单独跑 feature apply(Buildroot 风格)
 
@@ -218,7 +217,7 @@ make distclean && make -j$(nproc) -DHAVE_KRAIO
 
 - **设计原理 + 业界对齐**:[docs/governance.md](./docs/governance.md)
 - **字段权威定义**:[docs/schemas.md](./docs/schemas.md)
-- **详细字段说明**:[docs/version-yaml-spec.md](./docs/version-yaml-spec.md)(以 schemas.md 为准)
+- **字段权威定义**:[docs/schemas.md](./docs/schemas.md)(单一权威)
 - **工具脚本 → 业界出处对照表**:[docs/governance.md §2.7](./docs/governance.md#27-tools-工具脚本--业界出处对照表)
 - **操作步骤(新增/废弃 patch 等)**:[docs/governance.md §4](./docs/governance.md#4-常见操作)
 
