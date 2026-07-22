@@ -486,30 +486,37 @@ v5.2 模型存在三处信息重复：
 
 | 重复点 | 来源 A | 来源 B | 说明 |
 |--------|--------|--------|------|
-| patch 列表 | `features.yaml.patches:` | `ls features/<name>/` | 文件系统已自描述，YAML 是冗余维护 |
+| patch 列表 | `features.yaml.patches:` | `ls <feature>/` | 文件系统已自描述，YAML 是冗余维护 |
 | feature 描述 | `features.yaml.title` | `.patch` 头 `Description:` | patch 头已有精确描述 |
 | 上游状态 | `features.yaml.upstream_status` | `.patch` 头 `Upstream-Status:` | 逐 patch 状态是真相，feature 级聚合可派生 |
-| Yocto recipe 字段 | `upstream.yaml` (SUMMARY/LICENSE/...) | — | 这是构建/发布系统的职责，不是 patch 仓的职责 |
+| Yocto recipe 字段 | `upstream.yaml` (SUMMARY/LICENSE/...) | — | 构建/发布系统的职责，不是 patch 仓的职责 |
+| `patches/` 目录层 | 无意义中间层 | — | 与 `features/` 两层嵌套，无信息增益 |
 
-**Buildroot 的教益**：Buildroot 不维护任何 patch 列表文件。patch 按 `NNNN-description.patch` 命名，`apply-patches.sh` 按目录文件名序遍历 apply。需要条件包含时，在 `Config.in` + `.mk` 里用 Kconfig 语法表达——**文件系统 + Kconfig，零冗余 YAML**。
+**Buildroot 的教益**：Buildroot 不维护任何 patch 列表文件，`package/<name>/` 下直接放 `0001-*.patch`，apply 按字典序遍历。需要条件包含时，`Config.in` + `.mk` 用 Kconfig 语法表达——**文件系统 + Kconfig，零冗余**。
 
 ### 6.2 设计方案
 
-**两个 YAML 合并为一个 `manifest.yaml`**，仅保留文件系统无法表达的字段：
+**两个 YAML 合并为一个 `manifest.yaml`**，去掉 `patches/features/` 两层嵌套，feature 目录直接放在版本目录下——与 Buildroot `package/<name>/` 同款结构：
 
 ```
 versions/redis-7.0.15/
-├── manifest.yaml              # ★ 唯一配置文件（上游 pin + feature config）
-└── patches/
-    └── features/
-        ├── kunpeng-hw-accel/
-        │   ├── 0001-hw-kunpeng-adapt-iouring.patch
-        │   └── 0002-perf-kunpeng-adapt-dtoe.patch
-        ├── jemalloc-arm64/
-        │   └── 0001-perf-jemalloc-arm64-pointer-tag-and-gc.patch
-        └── rdb-aof-fallback/
-            └── 0001-perf-rdb-fallback-aof.patch
+├── manifest.yaml              # ★ 唯一配置文件
+├── kunpeng-hw-accel/          # feature 目录（manifest.yaml 平级）
+│   ├── 0001-hw-kunpeng-adapt-iouring.patch
+│   └── 0002-perf-kunpeng-adapt-dtoe.patch
+├── jemalloc-arm64/
+│   └── 0001-perf-jemalloc-arm64-pointer-tag-and-gc.patch
+└── rdb-aof-fallback/
+    └── 0001-perf-rdb-fallback-aof.patch
 ```
+
+**对比**：
+
+| 结构维度 | v5.2 | v6.0 |
+|---------|------|------|
+| 版本级 YAML 文件 | 2 (`upstream.yaml` + `patches/features.yaml`) | 1 (`manifest.yaml`) |
+| 目录嵌套层数 | 3 (`patches/features/<name>/`) | 1 (`<name>/`) |
+| `ls` 一眼看清 feature | `ls patches/features/` | `ls .` (manifest.yaml 旁边就是) |
 
 **manifest.yaml 模板**：
 
@@ -541,15 +548,16 @@ features:
 | `upstream.repo/version/commit` | upstream.yaml | manifest.yaml | 唯一硬需 |
 | Yocto recipe (SUMMARY/LICENSE/...) | upstream.yaml | **砍掉** | 构建/发布系统职责 |
 | `meta` (owner/maintainer/lifecycle) | upstream.yaml | **砍掉** | git blame + CODEOWNERS 更可靠 |
-| `features.<name>.patches` | features.yaml | **砍掉** | 文件系统 `ls features/<name>/` 即得 |
+| `features.<name>.patches` | features.yaml | **砍掉** | `ls <feature>/` 即得 (Buildroot 同款) |
 | `features.<name>.title` | features.yaml | **砍掉** | patch 头 `Description:` 已有 |
 | `features.<name>.upstream_status` | features.yaml | **砍掉** | 从 patch 头 `Upstream-Status:` 实时计算 |
 | `features.<name>.depends` | features.yaml | manifest.yaml | **唯一来源，保留** |
 | `features.<name>.default` | features.yaml | manifest.yaml | **唯一来源，保留** |
+| `patches/features/` 目录嵌套 | 有 | **去掉** | feature 目录 = 版本目录的子目录 |
 
 ### 6.3 apply_patch.sh 变更
 
-v5.2 的 compose 逻辑从 `features.yaml.patches` 列表读取 patch 顺序 → 改为遍历 `features/<feature>/` 目录，按 `*.patch` 文件名字典序 apply：
+v5.2 从 `features.yaml.patches` 列表读取 → v6.0 遍历版本目录下的 feature 子目录，按 `*.patch` 文件名字典序 apply：
 
 ```text
 # v5.2: 读 YAML 列表
@@ -559,19 +567,20 @@ features:
       - 0001-hw-kunpeng-adapt-iouring.patch
       - 0002-perf-kunpeng-adapt-dtoe.patch
 
-# v6.0: 读目录排序
-features/kunpeng-hw-accel/
+# v6.0: 读目录排序（Buildroot 同款）
+kunpeng-hw-accel/
 ├── 0001-hw-kunpeng-adapt-iouring.patch    ← apply 第 1 个
 └── 0002-perf-kunpeng-adapt-dtoe.patch     ← apply 第 2 个
 ```
 
-depends 解析和 `default: true` 默认组合逻辑不变。
+`depends` 解析和 `default: true` 默认组合逻辑不变。路径计算：`<version-dir>/<feature>/*.patch`。
 
 ### 6.4 复杂度对比
 
 | 维度 | v5.2 | v6.0 | 降幅 |
 |------|:--:|:--:|:--:|
 | 版本级文件数 | 2 (upstream.yaml + features.yaml) | 1 (manifest.yaml) | -50% |
+| 目录嵌套层数 | 3 (`patches/features/<name>/`) | 1 (`<name>/`) | -66% |
 | YAML 字段总数 | ~16 | 5 | -69% |
 | 新增 patch 操作 | 3 步 (cp + 写 patch 头 + 改 YAML) | 2 步 (cp + 写 patch 头) | -33% |
 | lint 校验面 | patch 头 + features.yaml + upstream.yaml | patch 头 + manifest.yaml | -33% |

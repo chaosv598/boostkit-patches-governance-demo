@@ -311,6 +311,20 @@ python3 .github/lint.py all versions/*/patches/  # patch 头 + features.yaml
 
 ### 5.1 `versions/<id>/manifest.yaml`（合并 upstream.yaml + features.yaml）
 
+**目录结构**（Buildroot `package/<name>/` 同款）：
+
+```
+versions/redis-7.0.15/
+├── manifest.yaml              # ★ 唯一配置文件
+├── kunpeng-hw-accel/          # feature 目录 = 版本目录的子目录
+│   ├── 0001-hw-kunpeng-adapt-iouring.patch
+│   └── 0002-perf-kunpeng-adapt-dtoe.patch
+├── jemalloc-arm64/
+│   └── 0001-perf-jemalloc-arm64-pointer-tag-and-gc.patch
+└── rdb-aof-fallback/
+    └── 0001-perf-rdb-fallback-aof.patch
+```
+
 **段 1：上游基线 pin**（必填）
 
 | 字段 | 必填 | 类型 | 语义 |
@@ -327,9 +341,10 @@ python3 .github/lint.py all versions/*/patches/  # patch 头 + features.yaml
 | `features.<name>.depends` | 否 | list[str] | DFS 深度优先解析 + 环依赖 hard-fail |
 | `features.<name>.default` | 否 | bool | 默认激活 (默认组合 = 所有 `default:true` 的并集) |
 
-**砍掉的字段**（见 governance.md §6.2 决策表）：
+**砍掉的字段和目录**（见 governance.md §6.2 决策表）：
 - `upstream.yaml`: Yocto recipe 字段、`meta` 块
 - `features.yaml`: `patches`（文件系统自描述）、`title`（patch 头）、`upstream_status`（派生）
+- `patches/features/` 目录嵌套（feature 目录直接放版本目录下）
 
 ### 5.2 模板
 
