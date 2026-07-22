@@ -125,20 +125,17 @@ jobs:
           echo "::endgroup::"
           echo "[skeleton] actions/cache 启用后,二次跑可省 clone upstream 时间"
 
-      # --- (would-be) Step 3: clean clone + fetch target commit + apply features ---
-      # v6.0:委托给 tools/apply_patch.sh --manifest
+      # --- (would-be) Step 3: clean clone + apply features ---
       - name: "Apply features on clean clone (v6.0)"
         run: |
           VID="$VID" UPSTREAM_REPO="$UPSTREAM_REPO" UPSTREAM_COMMIT="$UPSTREAM_COMMIT" bash << 'BUILDSCRIPT'
           set -euo pipefail
           WORK="/tmp/${VID}"
-          MANIFEST="$GITHUB_WORKSPACE/versions/${VID}/manifest.yaml"
           mkdir -p "$WORK" "$GITHUB_WORKSPACE/artifacts/${VID}"
 
-          echo "→ v6.0 apply_patch.sh --manifest: $MANIFEST"
+          echo "→ apply_patch.sh $VID"
           bash tools/apply_patch.sh \
               "$UPSTREAM_REPO" "$UPSTREAM_COMMIT" \
-              --manifest "$MANIFEST" \
               "versions/${VID}" "$WORK" || {
             rc=$?
             echo "  ⚠ apply rc=$rc (不影响 merge)"

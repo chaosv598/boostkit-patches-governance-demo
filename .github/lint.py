@@ -225,84 +225,37 @@ def lint_manifest(manifest_yaml: Path) -> list[str]:
     if not isinstance(data, dict):
         return [f"{manifest_yaml}: 顶层不是 dict"]
 
-    # upstream pin
-    up = data.get("upstream", {}) or {}
-    if not isinstance(up, dict) or not up.get("repo") or not up.get("version") or not up.get("commit"):
-        errs.append(f"{manifest_yaml}: 缺 upstream.repo/version/commit")
-    elif not SHA_RE.fullmatch(up.get("commit", "")):
-        errs.append(f"{manifest_yaml}: upstream.commit 不是 40-char SHA")
+    for f in ("repo", "version", "commit"):
+        if not data.get(f):
+            errs.append(f"{manifest_yaml}: 缺 {f}:")
 
-    features = data.get("features", {})
-    if not isinstance(features, dict) or not features:
-        return [f"{manifest_yaml}: 没有 features 段(或为空)"]
+    commit = data.get("commit", "")
+    if commit and not SHA_RE.fullmatch(commit):
+        errs.append(f"{manifest_yaml}: commit 不是 40-char SHA: {commit!r}")
 
-    # 1. 每个 feature 的目录必须存在
-    for fname, info in features.items():
-        if not isinstance(info, dict):
-            errs.append(f"{manifest_yaml}: feature {fname!r} 不是 dict")
-            continue
-        feat_dir = version_dir / fname
-        if not feat_dir.is_dir():
-            errs.append(f"{manifest_yaml}: feature {fname!r}: 目录不存在 {feat_dir}")
-            continue
-        deps = info.get("depends", []) or []
-        if not isinstance(deps, list):
-            errs.append(f"{manifest_yaml}: feature {fname!r}: depends 不是 list")
-            deps = []
-
-    # 2. depends 引用必须存在
-    for fname, info in features.items():
-        if not isinstance(info, dict):
-            continue
-        for dep in (info.get("depends", []) or []):
-            if dep not in features:
-                errs.append(f"{manifest_yaml}: feature {fname!r}.depends={dep!r} 未知")
-
-    # 3. 环依赖检测
-    def has_cycle(start: str) -> bool:
-        seen: set[str] = set()
-        stack = [start]
-        while stack:
-            n = stack.pop()
-            if n in seen:
-                continue
-            seen.add(n)
-            info = features.get(n)
-            if not isinstance(info, dict):
-                continue
-            for d in (info.get("depends", []) or []):
-                if d == start:
-                    return True
-                if d not in seen:
-                    stack.append(d)
-        return False
-
-    for fname in features:
-        if has_cycle(fname):
-            errs.append(f"{manifest_yaml}: feature {fname!r}: 检测到环依赖")
-
-    # 4. 孤儿检查: version dir 下的子目录如未在 manifest 声明，可能为孤儿 feature
+    # 发现 feature 目录 (Buildroot 风格: 有 .patch 的子目录 = feature)
+    all_patches: list[Path] = []
     for child in sorted(version_dir.iterdir()):
-        if child.is_dir() and not child.name.startswith(".") and child.name not in features:
-            if any(child.glob("*.patch")):
-                errs.append(f"{manifest_yaml}: 孤儿 feature 目录 (manifest.yaml 未声明): {child.name}/")
+        if not child.is_dir() or child.name.startswith("."):
+            continue
+        pf = sorted(child.glob("*.patch"))
+        if pf:
+            all_patches.extend(pf)
 
-    # 5. DEP-3 6 必填字段
-    for fname, info in features.items():
-        if not isinstance(info, dict):
+    # 孤儿检查: 版本目录根下的 .patch 文件
+    for pf in sorted(version_dir.glob("*.patch")):
+        errs.append(f"{pf}: 根目录 .patch (应放到 feature 子目录)")
+
+    # DEP-3 6 必填
+    for pf in sorted(version_dir.rglob("*.patch")):
+        try:
+            text = pf.read_text(encoding="utf-8", errors="replace")
+        except OSError:
             continue
-        feat_dir = version_dir / fname
-        if not feat_dir.is_dir():
-            continue
-        for pf in sorted(feat_dir.glob("*.patch")):
-            try:
-                text = pf.read_text(encoding="utf-8", errors="replace")
-            except OSError:
-                continue
-            hdr = parse_header_minimal(text)
-            missing = [k for k in DEP3_REQUIRED if not hdr.get(k)]
-            if missing:
-                errs.append(f"{pf}: 缺 DEP-3 必填字段: {', '.join(missing)}")
+        hdr = parse_header_minimal(text)
+        missing = [k for k in DEP3_REQUIRED if not hdr.get(k)]
+        if missing:
+            errs.append(f"{pf}: 缺 DEP-3 必填字段: {', '.join(missing)}")
 
     return errs
 
@@ -316,9 +269,9 @@ def cmd_manifest(targets: list[Path]) -> int:
             for e in errs:
                 print(f"  ✗ {e}", file=sys.stderr)
         else:
-            print(f"  ✓ {my}: manifest.yaml OK, DEP-3 必填字段全")
+            print(f"  ✓ {my}: manifest OK, DEP-3 全")
 
-    print(f"\n--- manifest.yaml lint: {len(targets)} 个, {len(all_errs)} 个错误 ---")
+    print(f"\n--- manifest: {len(targets)} 个, {len(all_errs)} 个错误 ---")
     return 0 if not all_errs else 1
 
 
@@ -414,10 +367,6 @@ def main(argv: list[str]) -> int:
     elif subcmd == "all":
         targets = collect_manifest_targets(rest)
         return cmd_all(targets, rest)
-    elif subcmd == "features":
-        print("⚠ 'features' 子命令已废弃，请用 'manifest'", file=sys.stderr)
-        targets = collect_manifest_targets(rest)
-        return cmd_manifest(targets)
     else:
         print(f"✗ 未知子命令: {subcmd}\n\n{USAGE}", file=sys.stderr)
         return 2
