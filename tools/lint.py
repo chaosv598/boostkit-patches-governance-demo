@@ -292,6 +292,14 @@ def lint_manifest(manifest_yaml: Path) -> list[str]:
         if missing:
             errs.append(f"{pf}: 缺 DEP-3 必填字段: {', '.join(missing)}")
 
+    # install.deps 文件存在性 (warning)
+    inst = data.get("install")
+    if isinstance(inst, dict):
+        for dep in (inst.get("deps", []) or []):
+            dep_path = version_dir / dep
+            if not dep_path.exists():
+                errs.append(f"{manifest_yaml}: install.deps: {dep} 不存在")
+
     return errs
 
 

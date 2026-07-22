@@ -1,156 +1,135 @@
 # Schema 权威定义 (v6.0)
 
-> 本文档是仓内 YAML / header 的**单一权威字段表**。所有示例、工具校验、CI 检查都以此为准。
-
 ## 目录结构
 
 ```
-versions/redis-7.0.15/
-├── manifest.yaml              # ★ 上游 pin + 可选 depends
-├── kunpeng-hw-accel/          # feature 目录（含 .patch 的目录即 feature）
-│   ├── 0001-hw-kunpeng-adapt-iouring.patch
-│   └── 0002-perf-kunpeng-adapt-dtoe.patch
-├── jemalloc-arm64/
-│   └── 0001-perf-jemalloc-arm64-pointer-tag-and-gc.patch
-└── rdb-aof-fallback/
-    └── 0001-perf-rdb-fallback-aof.patch
+<repo>/
+├── .github/
+│   ├── lint.py                 # patch 头 + manifest 校验
+│   └── workflows/ci.yml        # CI（3 步）
+├── tools/
+│   ├── apply_patch.sh          # Buildroot 风格 patch 应用器
+│   └── verify.sh               # 一键验证
+├── docs/
+│   ├── schemas.md              # 本文档
+│   ├── zh/                     # 产品文档：特性指南 + 版本说明书
+│   └── en/
+└── src/
+    └── <Upstream-Version>/     # 例: Redis-7.0.15
+        ├── manifest.yaml       # ★ 唯一配置文件
+        ├── <feature>/          # feature = 含 .patch 的子目录
+        │   └── *.patch         # DEP-3 邮件式头
+        ├── deps/               # 构建依赖（可选）
+        └── rpm_build/          # RPM 打包（可选）
 ```
 
----
+## 1. Patch 邮件式头（DEP-3）
 
-## 1. Patch 邮件式头（`*.patch` 文件首部, DEP-3）
+| 字段 | 类型 | 必填 | 语义 |
+|------|------|:--:|------|
+| `From` | `Name <email>` | 是 | 作者 |
+| `Subject` | string | 是 | 标题 |
+| `Description` | string ≥20 | 是 | 改了什么 + 为何改 |
+| `Origin` | URL/string | 是 | 出处 |
+| `Upstream-Status` | enum | 是 | Pending/Submitted/Accepted/Rejected/Backport/Inappropriate/Denied/Inactive-Upstream |
+| `Applies-To` | string | 是 | 适用上游版本 |
+| `Maintainer` | `Name <email>` | 是 | 维护人 |
+| `Last-Update` | `YYYY-MM-DD` | 是 | 最后更新日期 |
+| `Signed-off-by` | `Name <email>` | 是 | DCO 签名 |
+| `Upstream-PR` | URL | 条件 | Submitted/Accepted/Backport 时必填 |
+| `Upstream-Commit` | 40-char SHA | 条件 | Accepted/Backport 时必填 |
+| `Whitelist-Reason` | string ≥30 | 条件 | Rejected/Inappropriate/Denied/Inactive-Upstream 时必填 |
 
-每个 patch 文件前若干行为 header，在 `diff --git` 之前。
+## 2. manifest.yaml
 
-### 1.1 字段表
+一个文件 = 版本 pin + 可选 feature 关系 + 可选 install。YAML 字段给脚本，注释给人。
 
-**6 必填**（DEP-3 规范）：
+### 必填
 
 | 字段 | 类型 | 语义 |
-|---|---|---|
-| `Description` | string ≥20 字符 | patch 改了什么 + 为何改 |
-| `Origin` | string | 出处 URL / vendor 名 / `local` |
-| `Upstream-Status` | enum（见 1.3） | 上游合入状态（Yocto 8 状态对齐） |
-| `Applies-To` | string | 该 patch 适用的上游 commit/version 范围 |
-| `Maintainer` | `Name <email>` | 本仓维护人 |
-| `Last-Update` | `YYYY-MM-DD` | 最后一次更新日期 |
+|------|------|------|
+| `repo` | URL | 上游 git URL |
+| `version` | string | upstream tag/version |
+| `commit` | 40-char SHA | immutable pin |
 
-**3 必填**（对齐 git format-patch + DCO）：`From` / `Subject` / `Signed-off-by`
+### features（可选）
 
-**条件必填**：
+仅当 feature 间有依赖或冲突时才声明。文件系统可推导的信息不在此出现。
 
-| 字段 | 触发条件 | 类型 | 语义 |
-|------|----------|------|------|
-| `Upstream-PR` | `Upstream-Status ∈ {Submitted, Accepted, Backport}` | URL | 上游 PR/issue 链接 |
-| `Upstream-Commit` | `Upstream-Status ∈ {Accepted, Backport}` | 40-char SHA | 上游 commit |
-| `Whitelist-Reason` | `Upstream-Status ∈ {Rejected, Inappropriate, Denied, Inactive-Upstream}` | string ≥30 字符 | 不合入上游的理由 |
-
-### 1.2 `Upstream-Status` 枚举（Yocto 8 状态）
-
-```text
-Pending / Submitted / Accepted / Rejected / Backport
-Inappropriate / Denied / Inactive-Upstream
-```
-
-### 1.3 模板
-
-```text
-From: chaosv598 <chaosv598@boostkit>
-Subject: [PATCH] Adapt io_uring for Kunpeng ARM
-
-Description: |
-  Adapt io_uring to use Kunpeng ARM optimizations.
-  Enable iouring submission polling for ARM64 cores.
-Origin: https://github.com/redis/redis/pull/12345
-Upstream-Status: Submitted
-Upstream-PR: https://github.com/redis/redis/pull/12345
-Applies-To: redis-7.0.15
-Maintainer: twwang@boostkit
-Last-Update: 2026-07-20
-Signed-off-by: chaosv598 <chaosv598@boostkit>
-
-diff --git a/src/io_uring.c b/src/io_uring.c
-...
-```
-
-### 1.4 校验命令
-
-```bash
-python3 .github/lint.py headers versions/*/
-```
-
----
-
-## 2. `versions/<id>/manifest.yaml`
-
-Buildroot 风格：上游 pin + 可选 depends。
-
-### 2.1 字段表
-
-| 字段 | 必填 | 类型 | 语义 |
-|------|------|------|------|
-| `repo` | **是** | URL | 上游 git URL |
-| `version` | **是** | string | upstream tag/version |
-| `commit` | **是** | 40-char SHA | immutable pin |
-| `depends` | 否 | dict | feature 间依赖（见 2.3） |
-
-### 2.2 模板
+| 字段 | 类型 | 语义 |
+|------|------|------|
+| `features.<name>.depends` | list[str] | 依赖项，列表顺序 = apply 顺序，DFS 解析 |
+| `features.<name>.conflicts` | list[str] | 互斥 feature，不能同时激活 |
 
 ```yaml
+features:
+  rdb-aof-fallback:
+    depends: [kunpeng-hw-accel]    # C 依赖 A
+    conflicts: []
+  kunpeng-hw-accel:
+    depends: []
+    conflicts: [kbaio, native-aio] # 和 kbaio 互斥
+```
+
+### install（可选）
+
+声明编译步骤，`apply_patch.sh` 在 apply 后自动执行。
+
+| 字段 | 类型 | 语义 |
+|------|------|------|
+| `install.deps` | list[str] | build 依赖文件清单（相对版本目录） |
+| `install.configure` | string | configure 命令 |
+| `install.build` | string | build 命令 |
+
+### 模板
+
+```yaml
+# 使用: bash tools/apply_patch.sh src/Redis-7.0.15 /tmp/build
+
 repo: https://github.com/redis/redis
 version: 7.0.15
 commit: f35f36a265403c07b119830aa4bb3b7d71653ec9
+
+features:
+  rdb-aof-fallback:
+    depends: [kunpeng-hw-accel]
+
+install:
+  build: make -j$(nproc) USE_KRAIO=1
+  deps:
+    - rpm_build/lib/libkraio.so
 ```
 
-### 2.3 `depends` 字段
-
-可选。仅在 feature 间有真正的依赖关系时才声明：
-
-```yaml
-depends:
-  C: [B, A]          # C 依赖 B 和 A，且 B 先于 A apply
-  D: [C]             # D 依赖 C（传递：B→A→C→D）
-```
-
-- 列表顺序 = 依赖项之间的 apply 顺序
-- 被依赖项始终在依赖者之前
-- 不声明 = 无依赖，所有 feature 按目录名字典序 apply
-- `ACTIVE_FEATURES="C"` 时自动拉入 B 和 A
-
-### 2.4 校验命令
+## 3. apply_patch.sh
 
 ```bash
-bash tools/verify.sh                       # 结构 + clean apply
-python3 .github/lint.py manifest versions/*/ # schema + depends + DEP-3
+# 全量
+apply_patch.sh src/Redis-7.0.15 /tmp/build
+
+# 子集
+apply_patch.sh --features "rdb-aof-fallback" src/Redis-7.0.15 /tmp/build
+apply_patch.sh --features "f1 f2" src/Redis-7.0.15 /tmp/build
 ```
 
----
+repo/version/commit 从 manifest.yaml 自动读取，不需要传参。`--features` 不传则全量 apply。
 
-## 3. 业界出处速查
+## 4. 业界出处映射
 
-| 方案 | 对齐到本仓何处 |
-|------|----------------|
-| **Buildroot** `apply-patches.sh` | 目录即 feature，文件名序即 apply 顺序 |
-| **Linux kernel Kconfig** | `depends` DFS 深度优先解析 + 环检测 |
-| **DEP-3** (Debian) | patch 邮件式头 schema，6 必填字段 |
+| 维度 | v6.0 | 业界出处 |
+|------|------|------|
+| patch 发现 + 排序 | 目录遍历，文件名序 | **Buildroot** `apply-patches.sh` |
+| 配置载体 | manifest.yaml（一个文件） | **Buildroot** `.mk` / **OpenWrt** `Makefile` / **RPM** `.spec` |
+| 依赖解析 | depends DFS + 环检测 | **Linux Kconfig** `depends on`（scripts/kconfig/symbol.c） |
+| 冲突检查 | conflicts 集合 | **Kconfig** `depends on !` / **Debian** `Conflicts:` |
+| patch 头规范 | 6 必填 + 条件必填 | **DEP-3** (Debian) + **Yocto** Upstream-Status |
+| feature 子集 | --features CLI | **OpenWrt** `CONFIG_FOO=y` + **Yocto** `DISTRO_FEATURES` |
+| 编译验证 | install: configure/build | **Buildroot** `BUILD_CMDS` / **RPM** `%build` |
+| 文档分层 | README → manifest → schemas → docs/zh/en | **Linux kernel** `Kconfig` + `Documentation/` |
 
-## 4. 校验矩阵
+## 5. 校验矩阵
 
-| 校验项 | 工具 | fail 表现 |
-|--------|------|-----------|
-| patch header 6 必填 | `lint.py headers` | 报错 + 缺失字段名 |
-| `Upstream-Status` 枚举 | `lint.py headers` | 报错 + 合法值列表 |
-| 条件必填联动 | `lint.py headers` | 报错 |
-| manifest 必填字段 | `lint.py manifest` | 报错 |
-| `depends` 引用存在 | `lint.py manifest` | 报错 + 未知 feature 名 |
-| `depends` 无环 | `lint.py manifest` | 报错 + 环路径 |
-| 孤儿 .patch（版本根） | `lint.py manifest` | 报错 + 路径 |
-| 仓根禁放 | `verify.sh` | rc=1 |
-| clean apply | `verify.sh` | rc=1 |
-
-## 5. 版本历史
-
-| 版本 | 关键变更 |
-|------|----------|
-| v5.2 | `upstream.yaml` (Yocto recipe + meta) + `features.yaml` (patches/title/default/upstream_status/depends) |
-| **v6.0** | 合并为 `manifest.yaml`（repo/version/commit + 可选 depends）；去掉 `patches/features/` 嵌套；砍 Yocto/meta/title/default/upstream_status/patches 列表 |
+| 校验项 | 命令 |
+|--------|------|
+| patch 头 6 必填 + 条件必填 | `python3 .github/lint.py headers src/*/` |
+| manifest schema + depends + conflicts + DEP-3 | `python3 .github/lint.py manifest src/*/` |
+| 结构 + clean apply | `bash tools/verify.sh` |

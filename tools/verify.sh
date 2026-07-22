@@ -1,43 +1,31 @@
 #!/usr/bin/env bash
 # verify — patch overlay 仓一键验证 (v6.0)
 #
-# 检查:
-#   1. 仓根禁放
-#   2. manifest.yaml schema (upstream pin)
-#   3. 功能目录一致性 (feature 目录 vs manifest)
-#   4. 干净 upstream apply (委托 apply_patch.sh)
+# 执行:
+#   1. lint (manifest + DEP-3 + patch headers)
+#   2. clean apply (委托 apply_patch.sh)
 #
 # 用法: bash tools/verify.sh
 set -e
+set -o pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 export APPLY_NON_STRICT="${VERIFY_STRICT:-0}"
-
 errs=0
 echo "=== boostkit verify ==="
 
-# === 1. 仓根禁放 ===
-echo "--- 仓根禁放 ---"
-root_bad=0
-if compgen -G "*.patch" > /dev/null 2>&1; then
-    echo "  ✗ 仓根发现 .patch"
-    ls *.patch 2>/dev/null; root_bad=$((root_bad+1))
-fi
-[ -f Dockerfile ] && { echo "  ✗ 仓根有 Dockerfile"; root_bad=$((root_bad+1)); }
-[ -f Makefile ]   && { echo "  ✗ 仓根有 Makefile";   root_bad=$((root_bad+1)); }
-for d in src/ storage/ sql/ include/ SPECS/ RPMS/ SOURCES/ BUILD/ SRPMS/ vendor/ out/; do
-    [ -d "$d" ] && { echo "  ✗ 仓根有目录: $d"; root_bad=$((root_bad+1)); }
-done
-[ "$root_bad" = "0" ] && echo "  ✓ 仓根干净"
-errs=$((errs+root_bad))
+# === 0. lint gate ===
+echo "--- lint ---"
+python3 "$ROOT/tools/lint.py" all src/*/ || { echo "✗ lint 未通过"; exit 1; }
 
-# === 2 + 3. manifest.yaml + feature 目录 + clean apply ===
+# === manifest + apply ===
+echo ""
 echo "--- manifest + apply ---"
 vcount=0
 
-for vdir in versions/*/; do
+for vdir in src/*/; do
     [ -d "$vdir" ] || continue
     vname=$(basename "$vdir")
     manifest="$vdir/manifest.yaml"
@@ -84,26 +72,51 @@ PYEOF
         errs=$((errs+1)); continue
     fi
 
-    REPO=$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['repo'])" "$read_vars")
-    SHA=$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['commit'])" "$read_vars")
     VERSION=$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['version'])" "$read_vars")
+    REPO=$(python3 -c "import json,sys; print(json.loads(sys.argv[1])['repo'])" "$read_vars")
 
-    # 发现 feature 目录
-    features=$(for d in "$vdir"*/; do [ -d "$d" ] || continue; n=$(basename "$d"); [[ "$n" == .* ]] && continue; compgen -G "$d*.patch" > /dev/null 2>&1 && echo -n "$n "; done)
+    echo "  ✓ $vname: $REPO @ $VERSION"
+    vcount=$((vcount+1))
 
-    echo "  ✓ $vname: upstream @ $VERSION ($SHA), features: ${features:-<none>}"
+    # 读取 conflicts 以便逐个 feature apply
+    CONFLICTS=$(python3 - "$manifest" <<'PYEOF'
+import sys, yaml, json
+m = yaml.safe_load(open(sys.argv[1]))
+feats = m.get("features") or {}
+c = []
+for f, v in feats.items():
+    for cf in (v.get("conflicts") or []):
+        c.append([f, cf])
+print(json.dumps(c))
+PYEOF
+    )
 
-    # === 4. clean apply ===
     WORK=$(mktemp -d)
-    if bash "$ROOT/tools/apply_patch.sh" "$REPO" "$SHA" "$vdir" "$WORK" 2>&1 | sed 's/^/    /'; then
-        :
+    HAS_CONFLICTS=$(echo "$CONFLICTS" | python3 -c "import json,sys; sys.exit(0 if json.loads(sys.stdin.read()) else 1)" 2>/dev/null && echo true || echo false)
+
+    if $HAS_CONFLICTS; then
+        # 有冲突：逐个 feature 单独 apply
+        for feat_dir in "$vdir"*/; do
+            feat=$(basename "$feat_dir")
+            [[ "$feat" == .* ]] && continue
+            compgen -G "$feat_dir*.patch" > /dev/null 2>&1 || continue
+            echo "    → 单独 apply: $feat"
+            SKIP_INSTALL=1 bash "$ROOT/tools/apply_patch.sh" \
+                --features "$feat" "$vdir" "$WORK" 2>&1 | sed 's/^/      /' || {
+                echo "    ✗ $feat apply 失败"
+                errs=$((errs+1))
+            }
+            rm -rf "$WORK/upstream"
+        done
     else
-        rc=$?
-        echo "  ✗ $vname: apply_patch.sh 退出 (rc=$rc)"
-        errs=$((errs+1))
+        # 无冲突：全量 apply
+        SKIP_INSTALL=1 bash "$ROOT/tools/apply_patch.sh" "$vdir" "$WORK" 2>&1 | sed 's/^/    /' || {
+            rc=$?
+            echo "  ✗ $vname: apply_patch.sh 退出 (rc=$rc)"
+            errs=$((errs+1))
+        }
     fi
     rm -rf "$WORK"
-    vcount=$((vcount+1))
 done
 
 echo "--- 汇总 ---"

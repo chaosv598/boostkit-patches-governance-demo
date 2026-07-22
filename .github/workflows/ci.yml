@@ -1,11 +1,7 @@
-# Patch overlay CI — v6.0 Buildroot 精简模型
+# Patch overlay CI — v6.0
 #
-# 流程:
-#   1. tools/verify.sh   — 仓根禁放 + manifest schema + clean apply
-#   2. .github/lint.py manifest — manifest schema + DEP-3 必填
-#   3. .github/lint.py headers  — patch 头 schema
-#
-# v6.0: 砍掉 features 段 + depends + default，manifest 仅 3 字段，feature 自动发现
+#   lint + apply（冲突 feature 分别验证）
+#   本地全量: bash tools/verify.sh
 
 name: ci
 
@@ -24,24 +20,13 @@ permissions:
   contents: read
 
 jobs:
-  verify:
+  ci:
     name: ci
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 10
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
+      - uses: actions/checkout@v4
       - name: Install pyyaml
         run: pip install pyyaml --quiet
-
-      - name: Verify (structure + clean apply)
-        run: bash tools/verify.sh
-
-      - name: Manifest + DEP-3 lint
-        run: python3 .github/lint.py manifest versions/*/
-
-      - name: Patch header lint
-        run: python3 .github/lint.py headers versions/*/
+      - name: Verify (lint + apply)
+        run: SKIP_INSTALL=1 bash tools/verify.sh
