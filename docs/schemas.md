@@ -294,17 +294,11 @@ python3 .github/lint.py features versions/*/patches/
 | `features.<name>.upstream_status` 枚举 | `lint.py features` | 任何 feature | 报错 + 列出合法值 |
 | 孤儿 patch(目录有但 features.yaml 未声明) | `lint.py features` | 任何 feature | 报错 + 路径 |
 
-### 4.3 一键本地 smoke
+### 4.3 本地一键验证
 
 ```bash
-# 1) 仓根干净 + upstream.yaml schema + clean clone + 按 features.yaml apply
-bash tools/verify.sh
-
-# 2) DEP-3 patch 头 schema(6 必填 + 条件必填 + 8 状态枚举)
-python3 .github/lint.py headers versions/*/patches/
-
-# 3) features.yaml schema + depends 解析 + DEP-3 必填字段
-python3 .github/lint.py features versions/*/patches/
+bash tools/verify.sh                      # 结构 + clean apply
+python3 .github/lint.py all versions/*/patches/  # patch 头 + features.yaml
 ```
 
 全部 rc=0 才算通过。

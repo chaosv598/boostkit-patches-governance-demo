@@ -220,23 +220,14 @@ bash tools/apply_patch.sh ... --features ... --active "jemalloc-arm64 rdb-aof-fa
 
 ### 2.7 `tools/` 工具脚本 → 业界出处对照表
 
-把 §2.1–§2.5 的 5 家业界出处**具体映射**到本仓 2 个工具脚本的每一步。
-工具头部注释 (`tools/apply_patch.sh` / `tools/verify.sh`) 也包含同样表格。
+把 §2.1–§2.5 的 5 家业界出处**具体映射**到本仓工具脚本。工具头部注释也同样包含此表。
 
-| 工具 / 步骤 | 业界出处 | 本仓实现要点 |
+| 工具 | 业界出处 | 本仓实现 |
 |---|---|---|
-| **`tools/apply_patch.sh`** (单点 series 应用器) | (主) **Buildroot** `support/scripts/apply-patches.sh` | line-by-line 读 series,跳过空行/`#` 注释,行内 `-pN` `-R` 透传给 `git apply` |
-| ↳ apply 步骤 | **OpenWrt** `scripts/patch-kernel.sh` | 同样 line walking 模式(OpenWrt 自己也说 "modeled after Buildroot") |
-| ↳ clone + fetch + checkout | **git** 自身 | `--depth 1` shallow clone + 按 SHA `git fetch` 兜底 |
-| ↳ `--features <yaml>` compose | **OpenWrt** `package/<name>/Config.in` + **Linux kernel Kconfig** + **Yocto** `.bbappend` | inline python heredoc 解析 features.yaml + 深度优先 depends 解析 + 环检测 + 写 tmp series |
-| ↳ `depends` DFS 解析 | **Linux kernel Kconfig** `depends on`(<URL>) + **OpenWrt** `Makefile` 条件 `PATCHFILES` | 同款 DFS 深度优先 + 环依赖 hard-fail;activate feature 时其依赖自动 include 并先 apply |
-| ↳ `--active "f1 f2"` | **OpenWrt** `Makefile` 条件 PATCHFILES + **Yocto** `bb.utils.contains` | 默认 = `default:true` 并集;env 或 CLI 覆盖 |
-| **`tools/verify.sh`** (PR gate) | | |
-| ↳ step 1: 仓根禁放检查 | **Buildroot** `support/scripts/check-package` + **OpenWrt** `scripts/feeds` + **Linux kernel** `scripts/checkpatch.pl` | 仓根不能有 `.patch` / `Dockerfile` / `Makefile` / `src/` 等;强制目录契约 |
-| ↳ step 2: `upstream.yaml` schema | **Yocto/OpenEmbedded** recipe 字段 + **git** 40-char SHA | SUMMARY/LICENSE/HOMEPAGE 强推荐 + SHA 严格正则;字段缺失 warning 不阻塞 |
-| ↳ step 3: clean apply 委托 | **Buildroot** + **OpenWrt** + **Linux kernel Kconfig** + **Yocto** | 调 `apply_patch.sh --features` 跑 clean clone + apply |
-| **`.github/lint.py headers`** | **DEP-3** + **Yocto** `Upstream-Status` 8 状态 | 6 必填字段 + 条件必填(Upstream-PR/Commit/Whitelist-Reason 按 Upstream-Status 联动) |
-| **`.github/lint.py features`** (v5.2 合并为 lint.py 子命令) | **OpenWrt Config.in** + **Linux kernel Kconfig** | schema + depends 引用存在 + 环检测 + DEP-3 必填字段联动 |
+| `tools/apply_patch.sh` | **Buildroot** `apply-patches.sh` + **OpenWrt** `Config.in` / `Makefile` + **Linux Kconfig** `depends` | 单点 series 应用器 + inline python compose，`--active` 选 feature，depends DFS 解析 + 环检测 |
+| `tools/verify.sh` | **Buildroot** `check-package` + **OpenWrt** `scripts/feeds` + **Yocto** recipe | 仓根禁放 + upstream.yaml schema + 委托 `apply_patch.sh --features` clean apply |
+| `.github/lint.py headers` | **DEP-3** + **Yocto** `Upstream-Status` | 6 必填 + 条件必填联动 |
+| `.github/lint.py features` | **OpenWrt Config.in** + **Linux Kconfig** | schema + depends + 环检测 + 孤儿 patch + DEP-3 必填字段 |
 
 **总结一句话**:本仓每个工具步骤都能追到至少 1 个业界出处,没有"自己造轮子"的环节。
 
