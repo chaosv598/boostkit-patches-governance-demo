@@ -302,3 +302,58 @@ python3 .github/lint.py all versions/*/patches/  # patch 头 + features.yaml
 ```
 
 全部 rc=0 才算通过。
+
+---
+
+## 5. 演进方向：v6.0 精简 Schema (PROPOSAL)
+
+> 与 [governance.md §6](./governance.md#6-演进方向v60-buildroot-精简模型-proposal) 配套。
+
+### 5.1 `versions/<id>/manifest.yaml`（合并 upstream.yaml + features.yaml）
+
+**段 1：上游基线 pin**（必填）
+
+| 字段 | 必填 | 类型 | 语义 |
+|---|---|---|---|
+| `upstream.repo` | **是** | URL | 上游 git URL |
+| `upstream.version` | **是** | string | upstream tag/version |
+| `upstream.commit` | **是** | 40-char SHA | immutable pin |
+
+**段 2：feature config**（仅保留文件系统无法表达的 2 个字段）
+
+| 字段 | 必填 | 类型 | 语义 |
+|---|---|---|---|
+| `features.<name>` 顶层 key | **是** (必须对应 `features/<name>/` 目录) | kebab-case string | 稳定 identifier |
+| `features.<name>.depends` | 否 | list[str] | DFS 深度优先解析 + 环依赖 hard-fail |
+| `features.<name>.default` | 否 | bool | 默认激活 (默认组合 = 所有 `default:true` 的并集) |
+
+**砍掉的字段**（见 governance.md §6.2 决策表）：
+- `upstream.yaml`: Yocto recipe 字段、`meta` 块
+- `features.yaml`: `patches`（文件系统自描述）、`title`（patch 头）、`upstream_status`（派生）
+
+### 5.2 模板
+
+```yaml
+upstream:
+  repo: https://github.com/redis/redis
+  version: 7.0.15
+  commit: f35f36a265403c07b119830aa4bb3b7d71653ec9
+
+features:
+  kunpeng-hw-accel:
+    depends: []
+    default: true
+  jemalloc-arm64:
+    depends: []
+    default: false
+  rdb-aof-fallback:
+    depends: []
+    default: true
+```
+
+### 5.3 校验命令（不变）
+
+```bash
+python3 .github/lint.py features versions/*/patches/
+# ↑ manifest.yaml schema (depends + default) + 目录一致性 (feature 名 = 目录名)
+```

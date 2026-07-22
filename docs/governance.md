@@ -474,3 +474,122 @@ compose,功能等价于独立 `compose_series.py`,但:
 如果将来 compose 逻辑变复杂(例:支持 guards / per-feature 自动测试),
 那时再拆出独立 `compose_series.py` 也不晚(YAGNI)。
 
+---
+
+## 6. 演进方向：v6.0 Buildroot 精简模型 (PROPOSAL)
+
+> 本节为设计提案，供评审。当前代码仍为 v5.2 模型，实施后再更新 §1 和 schemas.md。
+
+### 6.1 动机
+
+v5.2 模型存在三处信息重复：
+
+| 重复点 | 来源 A | 来源 B | 说明 |
+|--------|--------|--------|------|
+| patch 列表 | `features.yaml.patches:` | `ls features/<name>/` | 文件系统已自描述，YAML 是冗余维护 |
+| feature 描述 | `features.yaml.title` | `.patch` 头 `Description:` | patch 头已有精确描述 |
+| 上游状态 | `features.yaml.upstream_status` | `.patch` 头 `Upstream-Status:` | 逐 patch 状态是真相，feature 级聚合可派生 |
+| Yocto recipe 字段 | `upstream.yaml` (SUMMARY/LICENSE/...) | — | 这是构建/发布系统的职责，不是 patch 仓的职责 |
+
+**Buildroot 的教益**：Buildroot 不维护任何 patch 列表文件。patch 按 `NNNN-description.patch` 命名，`apply-patches.sh` 按目录文件名序遍历 apply。需要条件包含时，在 `Config.in` + `.mk` 里用 Kconfig 语法表达——**文件系统 + Kconfig，零冗余 YAML**。
+
+### 6.2 设计方案
+
+**两个 YAML 合并为一个 `manifest.yaml`**，仅保留文件系统无法表达的字段：
+
+```
+versions/redis-7.0.15/
+├── manifest.yaml              # ★ 唯一配置文件（上游 pin + feature config）
+└── patches/
+    └── features/
+        ├── kunpeng-hw-accel/
+        │   ├── 0001-hw-kunpeng-adapt-iouring.patch
+        │   └── 0002-perf-kunpeng-adapt-dtoe.patch
+        ├── jemalloc-arm64/
+        │   └── 0001-perf-jemalloc-arm64-pointer-tag-and-gc.patch
+        └── rdb-aof-fallback/
+            └── 0001-perf-rdb-fallback-aof.patch
+```
+
+**manifest.yaml 模板**：
+
+```yaml
+# 上游基线 (Buildroot 风格: immutable pin, 无 Yocto recipe 字段)
+upstream:
+  repo: https://github.com/redis/redis
+  version: 7.0.15
+  commit: f35f36a265403c07b119830aa4bb3b7d71653ec9
+
+# Feature config (Buildroot Config.in Kconfig 语义 +
+#               OpenWrt 条件 PATCHFILES: 只声明文件系统无法表达的信息)
+features:
+  kunpeng-hw-accel:
+    depends: []
+    default: true
+  jemalloc-arm64:
+    depends: []
+    default: false
+  rdb-aof-fallback:
+    depends: []
+    default: true
+```
+
+**字段决策表**：
+
+| 字段 | v5.2 | v6.0 | 理由 |
+|------|:---:|:---:|------|
+| `upstream.repo/version/commit` | upstream.yaml | manifest.yaml | 唯一硬需 |
+| Yocto recipe (SUMMARY/LICENSE/...) | upstream.yaml | **砍掉** | 构建/发布系统职责 |
+| `meta` (owner/maintainer/lifecycle) | upstream.yaml | **砍掉** | git blame + CODEOWNERS 更可靠 |
+| `features.<name>.patches` | features.yaml | **砍掉** | 文件系统 `ls features/<name>/` 即得 |
+| `features.<name>.title` | features.yaml | **砍掉** | patch 头 `Description:` 已有 |
+| `features.<name>.upstream_status` | features.yaml | **砍掉** | 从 patch 头 `Upstream-Status:` 实时计算 |
+| `features.<name>.depends` | features.yaml | manifest.yaml | **唯一来源，保留** |
+| `features.<name>.default` | features.yaml | manifest.yaml | **唯一来源，保留** |
+
+### 6.3 apply_patch.sh 变更
+
+v5.2 的 compose 逻辑从 `features.yaml.patches` 列表读取 patch 顺序 → 改为遍历 `features/<feature>/` 目录，按 `*.patch` 文件名字典序 apply：
+
+```text
+# v5.2: 读 YAML 列表
+features:
+  kunpeng-hw-accel:
+    patches:
+      - 0001-hw-kunpeng-adapt-iouring.patch
+      - 0002-perf-kunpeng-adapt-dtoe.patch
+
+# v6.0: 读目录排序
+features/kunpeng-hw-accel/
+├── 0001-hw-kunpeng-adapt-iouring.patch    ← apply 第 1 个
+└── 0002-perf-kunpeng-adapt-dtoe.patch     ← apply 第 2 个
+```
+
+depends 解析和 `default: true` 默认组合逻辑不变。
+
+### 6.4 复杂度对比
+
+| 维度 | v5.2 | v6.0 | 降幅 |
+|------|:--:|:--:|:--:|
+| 版本级文件数 | 2 (upstream.yaml + features.yaml) | 1 (manifest.yaml) | -50% |
+| YAML 字段总数 | ~16 | 5 | -69% |
+| 新增 patch 操作 | 3 步 (cp + 写 patch 头 + 改 YAML) | 2 步 (cp + 写 patch 头) | -33% |
+| lint 校验面 | patch 头 + features.yaml + upstream.yaml | patch 头 + manifest.yaml | -33% |
+
+### 6.5 与业界对齐（精简为 3 家）
+
+| 方案 | 对齐点 |
+|------|--------|
+| **Buildroot** `apply-patches.sh` | patch 顺序由文件名字典序决定，不维护列表文件（**主对齐**） |
+| **OpenWrt** `Config.in` + `Makefile` | `depends` + `default` = Kconfig 语义 + 条件 PATCHFILES（仅此二字段保留） |
+| **DEP-3** (Debian) | patch 头 schema，6 必填字段（不变） |
+
+> Yocto recipe 字段和 Linux kernel Kconfig `select` 语义在 v6.0 中移除——前者归位到构建系统，后者由 `depends` 的自动 include 行为等效覆盖。
+
+### 6.6 何时需要恢复 `patches:` 列表或 `series` 文件？
+
+- 单个 feature 内 patch 数量 >20 且需要非字典序排序 → `manifest.yaml` 加可选的 `order:` 列表
+- 跨 feature 的 patch 交叠顺序需要精细控制 → 恢复 `series` 文件
+
+本仓场景（<50 patch，每个 feature <10 patch，文件名字典序足够表达顺序）维持 YAGNI。
+
