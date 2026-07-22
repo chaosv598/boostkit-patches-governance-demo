@@ -1,18 +1,15 @@
-# Patch overlay CI —— v5.0 模型(v5.1 起 3 步,v5.2 合并 lint 脚本)
+# Patch overlay CI —— v6.0 Buildroot 精简模型
 #
-# 流程 (按 docs/schemas.md + docs/governance.md):
-#   1. tools/verify.sh   —— 仓根禁放 + upstream.yaml schema + clean clone + features.yaml compose + apply
-#   2. .github/lint.py features —— features.yaml schema + depends 解析 + DEP-3 必填字段
-#   3. .github/lint.py headers  —— patch 邮件式头 schema 校验
+# 流程:
+#   1. tools/verify.sh   —— 仓根禁放 + manifest.yaml schema + clean apply
+#   2. .github/lint.py manifest —— manifest.yaml schema + depends + DEP-3 必填
+#   3. .github/lint.py headers  —— patch 头 schema 校验
 #
-# v5.1: 删掉原 step 4 (gen_inventory.py --check),原因:gitignored 派生 + CI 上是
-# 同义反复(verify.sh 已写过 inventory.json,check 跟自己再生成一遍比 → 永远相等)。
-# v5.2: lint_patch_headers.py + lint_series.py 合并为 lint.py(子命令 headers/features/all)。
+# v5.1: 删掉 gen_inventory.py
+# v5.2: lint_patch_headers.py + lint_series.py 合并为 lint.py
+# v6.0: 两个 YAML 合并为 manifest.yaml，去掉 patches/features/ 嵌套，子命令 features→manifest
 #
-# 失败策略:
-#   - ci.yml 任何一项 fail = block merge
-#   - build-perf build 失败 = block merge
-#   - build-perf bench 异常 = warn 不 block
+# 失败策略: 任何一项 fail = block merge
 
 name: ci
 
@@ -44,14 +41,11 @@ jobs:
       - name: Install pyyaml
         run: pip install pyyaml --quiet
 
-      # 1. 结构 + clean apply(tools/verify.sh)
       - name: Verify (structure + clean apply)
         run: bash tools/verify.sh
 
-      # 2. features.yaml schema + depends 解析 + DEP-3 必填字段
-      - name: Features.yaml lint
-        run: python3 .github/lint.py features versions/*/patches/
+      - name: Manifest lint
+        run: python3 .github/lint.py manifest versions/*/
 
-      # 3. patch 邮件式头 schema
       - name: Patch header lint
-        run: python3 .github/lint.py headers versions/*/patches/
+        run: python3 .github/lint.py headers versions/*/

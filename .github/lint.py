@@ -10,11 +10,12 @@ lint —— BoostKit Patch 仓统一 lint 工具
   - git format-patch 邮件式头(From/Date/Subject/Signed-off-by)
   - OpenWrt package/<name>/Config.in (bool + depends + default schema)
   - Linux kernel Kconfig (depends / select 语义)
+  - Buildroot package/<name>/ (patch 按目录文件名字典序)
 
 用法:
-  python3 .github/lint.py headers <patch-or-dir>...   # patch 头校验(DEP-3 6 必填 + 条件必填)
-  python3 .github/lint.py features <patches-dir>...   # features.yaml 校验(schema + depends + DEP-3)
-  python3 .github/lint.py all <patches-dir>...        # 一键全量(headers + features)
+  python3 .github/lint.py headers <patch-or-dir>...    # patch 头校验(DEP-3 6 必填 + 条件必填)
+  python3 .github/lint.py manifest <version-dir>...    # manifest.yaml 校验(schema + depends + DEP-3)
+  python3 .github/lint.py all <version-dir>...         # 一键全量(headers + manifest)
 
 退出码:
   0 全过 / 1 有失败
@@ -207,64 +208,57 @@ def cmd_headers(paths: list[Path]) -> int:
     return 0 if not all_errs else 1
 
 
-# === subcommand: features ===
+# === subcommand: manifest ===
 
-def lint_features(features_yaml: Path) -> list[str]:
+def lint_manifest(manifest_yaml: Path) -> list[str]:
     errs: list[str] = []
-    patches_dir = features_yaml.parent
+    version_dir = manifest_yaml.parent
 
-    if not features_yaml.is_file():
-        return [f"{features_yaml}: 不存在"]
+    if not manifest_yaml.is_file():
+        return [f"{manifest_yaml}: 不存在"]
 
     try:
-        data = yaml.safe_load(features_yaml.read_text(encoding="utf-8"))
+        data = yaml.safe_load(manifest_yaml.read_text(encoding="utf-8"))
     except yaml.YAMLError as e:
-        return [f"{features_yaml}: YAML 解析失败: {e}"]
+        return [f"{manifest_yaml}: YAML 解析失败: {e}"]
 
     if not isinstance(data, dict):
-        return [f"{features_yaml}: 顶层不是 dict"]
+        return [f"{manifest_yaml}: 顶层不是 dict"]
+
+    # upstream pin
+    up = data.get("upstream", {}) or {}
+    if not isinstance(up, dict) or not up.get("repo") or not up.get("version") or not up.get("commit"):
+        errs.append(f"{manifest_yaml}: 缺 upstream.repo/version/commit")
+    elif not SHA_RE.fullmatch(up.get("commit", "")):
+        errs.append(f"{manifest_yaml}: upstream.commit 不是 40-char SHA")
 
     features = data.get("features", {})
     if not isinstance(features, dict) or not features:
-        return [f"{features_yaml}: 没有 features 段(或为空)"]
+        return [f"{manifest_yaml}: 没有 features 段(或为空)"]
 
-    declared_patches: set[tuple[str, str]] = set()
+    # 1. 每个 feature 的目录必须存在
     for fname, info in features.items():
         if not isinstance(info, dict):
-            errs.append(f"{features_yaml}: feature {fname!r} 不是 dict")
+            errs.append(f"{manifest_yaml}: feature {fname!r} 不是 dict")
             continue
-        if not info.get("title"):
-            errs.append(f"{features_yaml}: feature {fname!r}: title 缺失")
-        patches = info.get("patches")
-        if not isinstance(patches, list) or not patches:
-            errs.append(f"{features_yaml}: feature {fname!r}: patches 缺失或为空")
+        feat_dir = version_dir / fname
+        if not feat_dir.is_dir():
+            errs.append(f"{manifest_yaml}: feature {fname!r}: 目录不存在 {feat_dir}")
             continue
-        for p in patches:
-            declared_patches.add((fname, p))
-            full = patches_dir / "features" / fname / p
-            if not full.is_file():
-                errs.append(f"{features_yaml}: feature {fname!r}: patch 不存在 {full}")
-
         deps = info.get("depends", []) or []
         if not isinstance(deps, list):
-            errs.append(f"{features_yaml}: feature {fname!r}: depends 不是 list")
+            errs.append(f"{manifest_yaml}: feature {fname!r}: depends 不是 list")
             deps = []
 
-        up_status = info.get("upstream_status")
-        if up_status is not None:
-            if up_status not in VALID_STATUSES:
-                errs.append(
-                    f"{features_yaml}: feature {fname!r}.upstream_status={up_status!r} "
-                    f"不是 Yocto 8 状态之一(合法值: {sorted(VALID_STATUSES)})"
-                )
-
+    # 2. depends 引用必须存在
     for fname, info in features.items():
         if not isinstance(info, dict):
             continue
         for dep in (info.get("depends", []) or []):
             if dep not in features:
-                errs.append(f"{features_yaml}: feature {fname!r}.depends={dep!r} 未知")
+                errs.append(f"{manifest_yaml}: feature {fname!r}.depends={dep!r} 未知")
 
+    # 3. 环依赖检测
     def has_cycle(start: str) -> bool:
         seen: set[str] = set()
         stack = [start]
@@ -285,68 +279,65 @@ def lint_features(features_yaml: Path) -> list[str]:
 
     for fname in features:
         if has_cycle(fname):
-            errs.append(f"{features_yaml}: feature {fname!r}: 检测到环依赖")
+            errs.append(f"{manifest_yaml}: feature {fname!r}: 检测到环依赖")
 
-    feat_root = patches_dir / "features"
-    if feat_root.is_dir():
-        for fdir in sorted(feat_root.iterdir()):
-            if not fdir.is_dir():
-                continue
-            feat_name = fdir.name
-            for p in sorted(fdir.glob("*.patch")):
-                if (feat_name, p.name) not in declared_patches:
-                    errs.append(f"{features_yaml}: 孤儿 patch (features.yaml 未声明): {feat_name}/{p.name}")
+    # 4. 孤儿检查: version dir 下的子目录如未在 manifest 声明，可能为孤儿 feature
+    for child in sorted(version_dir.iterdir()):
+        if child.is_dir() and not child.name.startswith(".") and child.name not in features:
+            if any(child.glob("*.patch")):
+                errs.append(f"{manifest_yaml}: 孤儿 feature 目录 (manifest.yaml 未声明): {child.name}/")
 
+    # 5. DEP-3 6 必填字段
     for fname, info in features.items():
         if not isinstance(info, dict):
             continue
-        for p in (info.get("patches", []) or []):
-            full = patches_dir / "features" / fname / p
-            if not full.is_file():
-                continue
+        feat_dir = version_dir / fname
+        if not feat_dir.is_dir():
+            continue
+        for pf in sorted(feat_dir.glob("*.patch")):
             try:
-                text = full.read_text(encoding="utf-8", errors="replace")
+                text = pf.read_text(encoding="utf-8", errors="replace")
             except OSError:
                 continue
             hdr = parse_header_minimal(text)
             missing = [k for k in DEP3_REQUIRED if not hdr.get(k)]
             if missing:
-                errs.append(f"{full}: 缺 DEP-3 必填字段: {', '.join(missing)}")
+                errs.append(f"{pf}: 缺 DEP-3 必填字段: {', '.join(missing)}")
 
     return errs
 
 
-def cmd_features(targets: list[Path]) -> int:
+def cmd_manifest(targets: list[Path]) -> int:
     all_errs: list[str] = []
-    for fy in targets:
-        errs = lint_features(fy)
+    for my in targets:
+        errs = lint_manifest(my)
         if errs:
             all_errs.extend(errs)
             for e in errs:
                 print(f"  ✗ {e}", file=sys.stderr)
         else:
-            print(f"  ✓ {fy}: features.yaml schema OK, DEP-3 必填字段全")
+            print(f"  ✓ {my}: manifest.yaml OK, DEP-3 必填字段全")
 
-    print(f"\n--- features.yaml lint: {len(targets)} 个, {len(all_errs)} 个错误 ---")
+    print(f"\n--- manifest.yaml lint: {len(targets)} 个, {len(all_errs)} 个错误 ---")
     return 0 if not all_errs else 1
 
 
 # === subcommand: all ===
 
-def cmd_all(features_targets: list[Path], original_args: list[str]) -> int:
+def cmd_all(manifest_targets: list[Path], original_args: list[str]) -> int:
     ret = 0
-    if cmd_features(features_targets) != 0:
+    if cmd_manifest(manifest_targets) != 0:
         ret = 1
 
-    patch_dirs: list[Path] = []
+    version_dirs: list[Path] = []
     for arg in original_args:
         p = Path(arg)
         if p.is_dir():
-            patch_dirs.append(p)
+            version_dirs.append(p)
 
-    if patch_dirs:
+    if version_dirs:
         patch_paths: list[Path] = []
-        for d in patch_dirs:
+        for d in version_dirs:
             patch_paths.extend(sorted(d.rglob("*.patch")))
         if patch_paths and cmd_headers(patch_paths) != 0:
             ret = 1
@@ -370,23 +361,23 @@ def collect_patch_paths(args: list[str]) -> list[Path]:
     return paths
 
 
-def collect_features_targets(args: list[str]) -> list[Path]:
+def collect_manifest_targets(args: list[str]) -> list[Path]:
     targets: list[Path] = []
     for arg in args:
         p = Path(arg)
         if p.is_dir():
-            fy = p / "features.yaml"
-            if not fy.is_file():
-                print(f"  ⚠ {p}/features.yaml 不存在, 跳过", file=sys.stderr)
+            my = p / "manifest.yaml"
+            if not my.is_file():
+                print(f"  ⚠ {p}/manifest.yaml 不存在, 跳过", file=sys.stderr)
                 continue
-            targets.append(fy)
-        elif p.is_file() and p.name == "features.yaml":
+            targets.append(my)
+        elif p.is_file() and p.name == "manifest.yaml":
             targets.append(p)
         else:
-            print(f"✗ {arg}: 不是 features.yaml 文件也不是 patches 目录", file=sys.stderr)
+            print(f"✗ {arg}: 不是 manifest.yaml 也不是版本目录", file=sys.stderr)
             sys.exit(1)
     if not targets:
-        print("✗ 未找到任何 features.yaml", file=sys.stderr)
+        print("✗ 未找到任何 manifest.yaml", file=sys.stderr)
         sys.exit(1)
     return targets
 
@@ -394,13 +385,13 @@ def collect_features_targets(args: list[str]) -> list[Path]:
 USAGE = """\
 用法:
   python3 .github/lint.py headers <patch-or-dir>...
-  python3 .github/lint.py features <patches-dir-or-features.yaml>...
-  python3 .github/lint.py all <patches-dir>...
+  python3 .github/lint.py manifest <version-dir-or-manifest.yaml>...
+  python3 .github/lint.py all <version-dir>...
 
 示例:
-  python3 .github/lint.py headers versions/*/patches/
-  python3 .github/lint.py features versions/*/patches/
-  python3 .github/lint.py all versions/*/patches/"""
+  python3 .github/lint.py headers versions/*/
+  python3 .github/lint.py manifest versions/*/
+  python3 .github/lint.py all versions/*/"""
 
 
 def main(argv: list[str]) -> int:
@@ -417,12 +408,16 @@ def main(argv: list[str]) -> int:
             print("(无 .patch 文件)")
             return 0
         return cmd_headers(paths)
-    elif subcmd == "features":
-        targets = collect_features_targets(rest)
-        return cmd_features(targets)
+    elif subcmd == "manifest":
+        targets = collect_manifest_targets(rest)
+        return cmd_manifest(targets)
     elif subcmd == "all":
-        targets = collect_features_targets(rest)
+        targets = collect_manifest_targets(rest)
         return cmd_all(targets, rest)
+    elif subcmd == "features":
+        print("⚠ 'features' 子命令已废弃，请用 'manifest'", file=sys.stderr)
+        targets = collect_manifest_targets(rest)
+        return cmd_manifest(targets)
     else:
         print(f"✗ 未知子命令: {subcmd}\n\n{USAGE}", file=sys.stderr)
         return 2

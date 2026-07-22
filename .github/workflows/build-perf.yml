@@ -6,23 +6,23 @@
 # 'fatal error: kraio.h: No such file or directory'。
 #
 # 工作流结构(完整保留供真 Kunpeng runner 使用):
-#   1. detect changed versions   → 从 versions/*/upstream.yaml 构造 matrix
+#   1. detect changed versions   → 从 versions/*/manifest.yaml 构造 matrix
 #   2. (would-be) Install deps   → apt-get build-essential tcl libssl-dev libevent-dev + memtier 源码
 #   3. (would-be) Clean clone    → git clone upstream + checkout pinned commit
-#   4. (would-be) Apply features → 按 features.yaml 委托 apply_patch.sh --features
+#   4. (would-be) Apply features → 按 manifest.yaml 委托 apply_patch.sh --manifest
 #   5. (would-be) make patched redis → make distclean && make -j
 #   6. (would-be) memtier_benchmark → redis-server + benchmark + parse summary
 #
 # 本仓 CI 上的把关完全交给 ci.yml 的 3 步:
-#   1. bash tools/verify.sh                  ← clean clone + 按 features.yaml apply (失败降级 warning)
-#   2. python3 .github/lint.py features ← features.yaml 一致性(schema + depends + DEP-3 必填)
-#   3. python3 .github/lint.py headers  ← patch 邮件式头 schema
+#   1. bash tools/verify.sh                  ← clean clone + 按 manifest.yaml apply
+#   2. python3 .github/lint.py manifest ← manifest.yaml 校验
+#   3. python3 .github/lint.py headers  ← patch 头 schema
 #
 # 真要跑(在 Kunpeng self-hosted runner 上):
 #   1. 拷本文件 skeleton 改成 'run: <实际命令>' 即可
 #   2. 或在 docs/governance.md §3.2 "本地复跑" 段按步骤手动跑
 #
-# 输入: versions/<v>/upstream.yaml + patches/features.yaml + patches/features/<f>/*.patch
+# 输入: versions/<v>/manifest.yaml + feature 目录 *.patch
 # 输出(本骨架): Job Summary 展示 matrix 检测结果 + 每个 version 的步骤意图
 
 name: build-perf
@@ -43,8 +43,8 @@ permissions:
 
 jobs:
   # === 第 1 步:检测哪些 versions 改动 → 构造 matrix ===
-  # 这是 workflow 的"动态生成 matrix"骨架,读 versions/*/upstream.yaml
-  # (而不是写死 redis-7.0.15 / redis-6.0.20),便于将来加新版本。
+  # 这是 workflow 的"动态生成 matrix"骨架,读 versions/*/manifest.yaml
+  # (而不是写死 redis-7.0.15),便于将来加新版本。
   changes:
     name: detect changed versions
     runs-on: ubuntu-latest
@@ -63,9 +63,9 @@ jobs:
           python3 - > "$GITHUB_OUTPUT" << 'PYEOF'
           import os, glob, yaml, json
           matrix = []
-          for uyaml in sorted(glob.glob("versions/*/upstream.yaml")):
-              vid = os.path.basename(os.path.dirname(uyaml))
-              with open(uyaml) as f:
+          for myaml in sorted(glob.glob("versions/*/manifest.yaml")):
+              vid = os.path.basename(os.path.dirname(myaml))
+              with open(myaml) as f:
                   m = yaml.safe_load(f)
               up = m.get("upstream", {})
               matrix.append({
@@ -126,28 +126,22 @@ jobs:
           echo "[skeleton] actions/cache 启用后,二次跑可省 clone upstream 时间"
 
       # --- (would-be) Step 3: clean clone + fetch target commit + apply features ---
-      # 此步真的跑(只到 apply,不跑 make)— 与 ci.yml verify.sh 的 apply 段等价
-      # 但放在 build-perf job 里再跑一次,作为"PR pipeline"视角下的二次确认
-      #
-      # v5.0:委托给 tools/apply_patch.sh --features(inline compose),不再直接读 series 文件
-      - name: "Apply features on clean clone (v5.0)"
+      # v6.0:委托给 tools/apply_patch.sh --manifest
+      - name: "Apply features on clean clone (v6.0)"
         run: |
           VID="$VID" UPSTREAM_REPO="$UPSTREAM_REPO" UPSTREAM_COMMIT="$UPSTREAM_COMMIT" bash << 'BUILDSCRIPT'
           set -euo pipefail
           WORK="/tmp/${VID}"
-          FEATURES_YAML="$GITHUB_WORKSPACE/versions/${VID}/patches/features.yaml"
-          PATCH_DIR="$GITHUB_WORKSPACE/versions/${VID}/patches"
+          MANIFEST="$GITHUB_WORKSPACE/versions/${VID}/manifest.yaml"
           mkdir -p "$WORK" "$GITHUB_WORKSPACE/artifacts/${VID}"
 
-          echo "→ v5.0 apply_patch.sh --features: $FEATURES_YAML"
-          echo "  ACTIVE_FEATURES=<features.yaml defaults>"
-          bash "$GITHUB_WORKSPACE/tools/apply_patch.sh" \
+          echo "→ v6.0 apply_patch.sh --manifest: $MANIFEST"
+          bash tools/apply_patch.sh \
               "$UPSTREAM_REPO" "$UPSTREAM_COMMIT" \
-              --features "$FEATURES_YAML" \
-              "$PATCH_DIR" "$WORK" || {
+              --manifest "$MANIFEST" \
+              "versions/${VID}" "$WORK" || {
             rc=$?
-            echo "  ⚠ apply 退出 rc=$rc(已知 stack rebase 残留,不影响 merge)"
-            echo "  ⚠ 真 Kunpeng runner 上 rc=0 才算通过"
+            echo "  ⚠ apply rc=$rc (不影响 merge)"
             exit $rc
           }
           echo "apply summary: 全部 apply 成功"
@@ -186,7 +180,7 @@ jobs:
             echo "|---|---|"
             echo "| Install deps | skeleton: 打印 apt-get + memtier clone 命令,未执行 |"
             echo "| Cache upstream | skeleton: 打印 cache key/path,未实际缓存 |"
-            echo "| Apply features (v5.0) | **实际执行**:clean clone + apply_patch.sh --features(inline compose) |"
+            echo "| Apply features (v6.0) | **实际执行**:clean clone + apply_patch.sh --manifest |"
             echo "| Build patched redis | skeleton: 打印 make 命令,KRAIO 依赖只在 Kunpeng 机器 |"
             echo "| Run memtier_benchmark | skeleton: 打印 redis-server + benchmark 命令 |"
             echo

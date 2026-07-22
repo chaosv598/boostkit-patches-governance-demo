@@ -1,0 +1,22 @@
+# versions/redis-7.0.15/manifest.yaml
+#
+# 上游基准 Buildroot 风格：immutable pin，无 Yocto recipe 字段
+# 业界参照：
+#   - Buildroot package/<name>/ —— patch 按目录文件名字典序 apply
+#   - OpenWrt Config.in —— depends + default = Kconfig 语义
+
+upstream:
+  repo: https://github.com/redis/redis
+  version: 7.0.15
+  commit: f35f36a265403c07b119830aa4bb3b7d71653ec9
+
+features:
+  kunpeng-hw-accel:
+    depends: []
+    default: true
+  jemalloc-arm64:
+    depends: []
+    default: false
+  rdb-aof-fallback:
+    depends: []
+    default: true
