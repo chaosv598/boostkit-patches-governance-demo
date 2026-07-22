@@ -233,20 +233,55 @@ def lint_manifest(manifest_yaml: Path) -> list[str]:
     if commit and not SHA_RE.fullmatch(commit):
         errs.append(f"{manifest_yaml}: commit 不是 40-char SHA: {commit!r}")
 
-    # 发现 feature 目录 (Buildroot 风格: 有 .patch 的子目录 = feature)
+    # 发现 feature 目录
+    feature_names: set[str] = set()
     all_patches: list[Path] = []
     for child in sorted(version_dir.iterdir()):
         if not child.is_dir() or child.name.startswith("."):
             continue
         pf = sorted(child.glob("*.patch"))
         if pf:
+            feature_names.add(child.name)
             all_patches.extend(pf)
 
-    # 孤儿检查: 版本目录根下的 .patch 文件
+    # 可选 depends 校验
+    depends = data.get("depends")
+    if isinstance(depends, dict) and depends:
+        for fname, deps in depends.items():
+            if not isinstance(deps, list):
+                errs.append(f"{manifest_yaml}: depends.{fname} 不是 list")
+                continue
+            if fname not in feature_names:
+                errs.append(f"{manifest_yaml}: depends.{fname}: 引用了不存在的 feature")
+            for d in deps:
+                if d not in feature_names:
+                    errs.append(f"{manifest_yaml}: depends.{fname}: 依赖的 {d!r} 目录不存在")
+
+        # 环检测
+        def has_cycle(start: str) -> bool:
+            seen: set[str] = set()
+            stack = [start]
+            while stack:
+                n = stack.pop()
+                if n in seen:
+                    continue
+                seen.add(n)
+                for d in depends.get(n, []):
+                    if d == start:
+                        return True
+                    if d not in seen:
+                        stack.append(d)
+            return False
+
+        for fname in depends:
+            if has_cycle(fname):
+                errs.append(f"{manifest_yaml}: depends: 检测到环依赖 (涉及 {fname!r})")
+
+    # 孤儿 .patch
     for pf in sorted(version_dir.glob("*.patch")):
         errs.append(f"{pf}: 根目录 .patch (应放到 feature 子目录)")
 
-    # DEP-3 6 必填
+    # DEP-3 必填
     for pf in sorted(version_dir.rglob("*.patch")):
         try:
             text = pf.read_text(encoding="utf-8", errors="replace")

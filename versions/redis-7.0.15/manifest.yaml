@@ -1,6 +1,13 @@
 # versions/redis-7.0.15/manifest.yaml
-# Buildroot style: immutable upstream pin, features = directories with *.patch
+# Buildroot style: upstream pin + optional feature dependencies
 
 repo: https://github.com/redis/redis
 version: 7.0.15
 commit: f35f36a265403c07b119830aa4bb3b7d71653ec9
+
+# depends (可选): 只声明跨 feature 的依赖关系
+#   列表顺序 = 依赖项之间的应用顺序
+#   B: [A] 表示 A 必须在 B 之前 apply
+#   C: [B, A] 表示 B 先于 A，都在 C 之前
+depends:
+#  rdb-aof-fallback: [kunpeng-hw-accel]
