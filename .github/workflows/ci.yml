@@ -1,13 +1,13 @@
-# Patch overlay CI —— v5.0 模型(v5.1 起 3 步)
+# Patch overlay CI —— v5.0 模型(v5.1 起 3 步,v5.2 合并 lint 脚本)
 #
 # 流程 (按 docs/schemas.md + docs/governance.md):
-#   1. tools/verify.sh        —— 仓根禁放 + upstream.yaml schema + clean clone + features.yaml compose + apply
-#   2. .github/lint_patch_headers.py —— patch 邮件式头 schema 校验
-#   3. .github/lint_series.py —— features.yaml schema + depends 解析 + DEP-3 必填字段(v5.0 替代 v4.0 的 series 一致性)
+#   1. tools/verify.sh   —— 仓根禁放 + upstream.yaml schema + clean clone + features.yaml compose + apply
+#   2. .github/lint.py features —— features.yaml schema + depends 解析 + DEP-3 必填字段
+#   3. .github/lint.py headers  —— patch 邮件式头 schema 校验
 #
 # v5.1: 删掉原 step 4 (gen_inventory.py --check),原因:gitignored 派生 + CI 上是
 # 同义反复(verify.sh 已写过 inventory.json,check 跟自己再生成一遍比 → 永远相等)。
-# 详情见 docs/governance.md §2.7 → v5.1 已删。
+# v5.2: lint_patch_headers.py + lint_series.py 合并为 lint.py(子命令 headers/features/all)。
 #
 # 失败策略:
 #   - ci.yml 任何一项 fail = block merge
@@ -48,10 +48,10 @@ jobs:
       - name: Verify (structure + clean apply)
         run: bash tools/verify.sh
 
-      # 2. patch 邮件式头 schema
-      - name: Patch header schema lint
-        run: python3 .github/lint_patch_headers.py versions/*/patches/
+      # 2. features.yaml schema + depends 解析 + DEP-3 必填字段
+      - name: Features.yaml lint
+        run: python3 .github/lint.py features versions/*/patches/
 
-      # 3. features.yaml schema + patch 头一致性
-      - name: Features.yaml + patch headers lint
-        run: python3 .github/lint_series.py versions/*/patches/
+      # 3. patch 邮件式头 schema
+      - name: Patch header lint
+        run: python3 .github/lint.py headers versions/*/patches/

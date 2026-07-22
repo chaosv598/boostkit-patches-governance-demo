@@ -20,7 +20,7 @@
 #     ${@bb.utils.contains('DISTRO_FEATURES', 'x', 'y', '', d)} —— 对应 ACTIVE_FEATURES
 #   - DEP-3:     patch 邮件式头 schema
 #     https://dep-team.pages.debian.net/deps/dep3/
-#     每个 .patch 文件头 6 必填字段(由 .github/lint_patch_headers.py 校验,
+#     每个 .patch 文件头 6 必填字段(由 .github/lint.py headers 校验,
 #     不在 apply_patch.sh 内部)
 #
 # 注:本仓 v5.0 起已删除 patches/series 文件 + series.<profile>,统一改用 features.yaml。

@@ -15,8 +15,8 @@
 #
 # 本仓 CI 上的把关完全交给 ci.yml 的 3 步:
 #   1. bash tools/verify.sh                  ← clean clone + 按 features.yaml apply (失败降级 warning)
-#   2. python3 .github/lint_patch_headers.py ← patch 邮件式头 schema
-#   3. python3 .github/lint_series.py        ← features.yaml 一致性(schema + depends + DEP-3 必填)
+#   2. python3 .github/lint.py features ← features.yaml 一致性(schema + depends + DEP-3 必填)
+#   3. python3 .github/lint.py headers  ← patch 邮件式头 schema
 #
 # 真要跑(在 Kunpeng self-hosted runner 上):
 #   1. 拷本文件 skeleton 改成 'run: <实际命令>' 即可

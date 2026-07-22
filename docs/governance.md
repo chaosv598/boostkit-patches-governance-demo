@@ -207,7 +207,7 @@ ACTIVE_FEATURES="kunpeng-hw-accel rdb-aof-fallback" bash tools/apply_patch.sh ..
 bash tools/apply_patch.sh ... --features ... --active "jemalloc-arm64 rdb-aof-fallback" /tmp/build
 ```
 
-**lint 规则**(`.github/lint_series.py`,v5.0 起改为 lint features.yaml):
+**lint 规则**(`.github/lint.py features`,v5.2 起合并 lint 脚本):
 - features.yaml schema 校验(title / patches / depends / default)
 - depends 引用必须存在,无环依赖
 - 物理 patch 必须存在 + 在 features.yaml 声明(无孤儿)
@@ -235,8 +235,8 @@ bash tools/apply_patch.sh ... --features ... --active "jemalloc-arm64 rdb-aof-fa
 | ↳ step 1: 仓根禁放检查 | **Buildroot** `support/scripts/check-package` + **OpenWrt** `scripts/feeds` + **Linux kernel** `scripts/checkpatch.pl` | 仓根不能有 `.patch` / `Dockerfile` / `Makefile` / `src/` 等;强制目录契约 |
 | ↳ step 2: `upstream.yaml` schema | **Yocto/OpenEmbedded** recipe 字段 + **git** 40-char SHA | SUMMARY/LICENSE/HOMEPAGE 强推荐 + SHA 严格正则;字段缺失 warning 不阻塞 |
 | ↳ step 3: clean apply 委托 | **Buildroot** + **OpenWrt** + **Linux kernel Kconfig** + **Yocto** | 调 `apply_patch.sh --features` 跑 clean clone + apply |
-| **`.github/lint_patch_headers.py`** | **DEP-3** + **Yocto** `Upstream-Status` 8 状态 | 6 必填字段 + 条件必填(Upstream-PR/Commit/Whitelist-Reason 按 Upstream-Status 联动) |
-| **`.github/lint_series.py`** (v5.0 起 lint features.yaml) | **OpenWrt Config.in** + **Linux kernel Kconfig** | schema + depends 引用存在 + 环检测 + DEP-3 必填字段联动 |
+| **`.github/lint.py headers`** | **DEP-3** + **Yocto** `Upstream-Status` 8 状态 | 6 必填字段 + 条件必填(Upstream-PR/Commit/Whitelist-Reason 按 Upstream-Status 联动) |
+| **`.github/lint.py features`** (v5.2 合并为 lint.py 子命令) | **OpenWrt Config.in** + **Linux kernel Kconfig** | schema + depends 引用存在 + 环检测 + DEP-3 必填字段联动 |
 
 **总结一句话**:本仓每个工具步骤都能追到至少 1 个业界出处,没有"自己造轮子"的环节。
 
@@ -246,13 +246,13 @@ bash tools/apply_patch.sh ... --features ... --active "jemalloc-arm64 rdb-aof-fa
 
 ### 3.1 `ci.yml`(PR / push master 时触发)
 
-3 步顺序(v5.1 起,v5.0 是 4 步):
+3 步顺序(v5.1 起,v5.0 是 4 步,v5.2 合并 lint 脚本):
 
 | 步骤 | 工具 | 职责 |
 |---|---|---|
 | 1 | `bash tools/verify.sh` | 仓根禁放 + upstream.yaml schema(Yocto 字段警告)+ 委托 `apply_patch.sh --features` clean apply |
-| 2 | `python3 .github/lint_patch_headers.py` | DEP-3 6 必填 + 额外 3 必填 + 条件必填 |
-| 3 | `python3 .github/lint_series.py` | v5.0 起改为 lint `features.yaml`(schema + depends 解析 + DEP-3 必填字段) |
+| 2 | `python3 .github/lint.py features` | features.yaml(schema + depends 解析 + DEP-3 必填字段) |
+| 3 | `python3 .github/lint.py headers` | DEP-3 6 必填 + 额外 3 必填 + 条件必填 |
 
 > **v5.1 移除原 step 4**(`gen_inventory.py --check`):原因 inventory.json 是
 > gitignored 派生物 + verify.sh 已写过一遍,CI 上 --check 是同义反复(自己跟自己
@@ -332,8 +332,8 @@ sed -i '/kunpeng-hw-accel:/,/^  [a-z]/ s|^      - 0002-perf-kunpeng-adapt-dtoe.p
 
 # 4. 本地 3 工具全 rc=0
 bash tools/verify.sh
-python3 .github/lint_patch_headers.py versions/*/patches/
-python3 .github/lint_series.py versions/*/patches/
+python3 .github/lint.py headers versions/*/patches/
+python3 .github/lint.py features versions/*/patches/
 
 # 5. 开 PR,触发 ci.yml + build-perf.yml
 ```
@@ -401,7 +401,7 @@ EOF
 
 # 4. 跑 3 工具验证
 bash tools/verify.sh
-python3 .github/lint_series.py versions/redis-7.0.15/patches/
+python3 .github/lint.py features versions/redis-7.0.15/patches/
 
 # 5. 用新 feature 跑 apply_patch.sh(默认组合不变,显式 ACTIVE 启用)
 ACTIVE_FEATURES="kunpeng-hw-accel rdb-aof-fallback feature-D" bash tools/apply_patch.sh \
@@ -442,7 +442,7 @@ audit / 包归属需要。但不阻塞 CI。
 
 ### Q4: DEP-3 6 必填字段是硬要求吗?
 
-是。`lint_patch_headers.py` rc=1 = block merge。Description 太短(<20 字符)
+是。`lint.py headers` rc=1 = block merge。Description 太短(<20 字符)
 或 Last-Update 格式错也会 fail。
 
 ### Q5: apply_patch.sh 的 fetch cache 怎么复用?

@@ -33,10 +33,9 @@ boostkit-patches-governance-demo/
 ├── LICENSE.txt                          # 上游 license 全文
 ├── .github/
 │   ├── PULL_REQUEST_TEMPLATE.md
-│   ├── lint_patch_headers.py            # DEP-3 6 必填字段校验
-│   ├── lint_series.py                   # v5.0 起 lint features.yaml(schema + depends + DEP-3 必填)
+│   ├── lint.py                           # v5.2 合并 lint:子命令 headers/features/all
 │   └── workflows/
-│       ├── ci.yml                       # 3 步:verify + patch 头 lint + features lint
+│       ├── ci.yml                       # 3 步:verify + features lint + patch header lint
 │       └── build-perf.yml               # 骨架演示 workflow(matrix + clean apply 真跑 + 后续 echo)
 ├── tools/
 │   ├── verify.sh                        # 仓根禁放 + upstream.yaml schema(委托 apply_patch.sh --features)
@@ -133,10 +132,10 @@ versions/redis-7.0.15/patches/features/
 bash tools/verify.sh
 
 # 2. DEP-3 patch 头 schema 校验(6 必填:Description/Origin/Upstream-Status/Applies-To/Maintainer/Last-Update)
-python3 .github/lint_patch_headers.py versions/*/patches/
+python3 .github/lint.py headers versions/*/patches/
 
 # 3. features.yaml schema + depends 解析 + DEP-3 必填字段
-python3 .github/lint_series.py versions/*/patches/
+python3 .github/lint.py features versions/*/patches/
 ```
 
 ### 2.5 Feature 组合(同一 upstream 多特性组合)
@@ -240,7 +239,7 @@ make distclean && make -j$(nproc) -DHAVE_KRAIO
 只接受 PR,不接受直推 master。流程:
 
 1. 新增 patch → 放 `patches/features/<feature>/` + 写 DEP-3 头(6 必填)+ 在 `features.yaml` 加 entry
-2. 跑本地 3 工具全绿(verify + 2 个 lint)
+2. 跑本地 3 工具全绿(verify + `lint.py headers` + `lint.py features`)
 3. 开 PR,触发 `ci.yml` 3 步 + `build-perf.yml` matrix(骨架)
 4. 维护者 review → merge
 

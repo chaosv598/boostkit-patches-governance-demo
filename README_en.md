@@ -33,10 +33,9 @@ boostkit-patches-governance-demo/
 ├── LICENSE.txt                          # Upstream license (full text)
 ├── .github/
 │   ├── PULL_REQUEST_TEMPLATE.md
-│   ├── lint_patch_headers.py            # DEP-3 6 required fields validator
-│   ├── lint_series.py                   # v5.0: lints features.yaml (schema + depends + DEP-3 required)
+│   ├── lint.py                           # v5.2 merged: subcommands headers/features/all
 │   └── workflows/
-│       ├── ci.yml                       # 3 steps: verify + patch header lint + features lint
+│       ├── ci.yml                       # 3 steps: verify + features lint + header lint
 │       └── build-perf.yml               # skeleton workflow (matrix: clean apply + echo steps)
 ├── tools/
 │   ├── verify.sh                        # root hygiene + upstream.yaml schema (delegates apply --features)
@@ -133,10 +132,10 @@ versions/redis-7.0.15/patches/features/
 bash tools/verify.sh
 
 # 2. DEP-3 patch header schema (6 required: Description/Origin/Upstream-Status/Applies-To/Maintainer/Last-Update)
-python3 .github/lint_patch_headers.py versions/*/patches/
+python3 .github/lint.py headers versions/*/patches/
 
 # 3. features.yaml schema + depends resolution + DEP-3 required fields
-python3 .github/lint_series.py versions/*/patches/
+python3 .github/lint.py features versions/*/patches/
 ```
 
 ### 2.5 Feature combos (subsets on the same upstream)
@@ -243,7 +242,7 @@ PR-only workflow. No direct pushes to master.
 
 1. Add patch → place under `patches/features/<feature>/` + write DEP-3 header (6 required) +
    add entry to `features.yaml`
-2. Run all 3 local tools, all green
+2. Run all 3 local tools, all green (verify + `lint.py headers` + `lint.py features`)
 3. Open PR → triggers `ci.yml` 3 steps + `build-perf.yml` matrix (skeleton)
 4. Maintainer review → merge
 

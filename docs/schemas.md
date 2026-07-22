@@ -1,7 +1,7 @@
 # Schema 权威定义
 
 > 本文档是仓内三类 YAML/header 的**单一权威字段表**。所有示例、工具校验、CI 检查都以此为准。
-> 文件清单:`lint_patch_headers.py` → §1,`verify.sh` → §2,`lint_series.py` → §3。
+> 文件清单:`lint.py headers` → §1,`verify.sh` → §2,`lint.py features` → §3。
 > 业界出处速查表见 [§4](#4-业界出处速查)。
 
 ---
@@ -71,7 +71,7 @@ diff --git a/src/io_uring.c b/src/io_uring.c
 ### 1.5 校验命令
 
 ```bash
-python3 .github/lint_patch_headers.py versions/*/patches/
+python3 .github/lint.py headers versions/*/patches/
 # 缺字段 → 报错 + 列出缺失字段名
 # Upstream-Status 非 8 状态 → 报错 + 列出合法值
 # 条件必填联动失败 → 报错(如 Submitted 缺 Upstream-PR)
@@ -256,7 +256,7 @@ rdb-aof-fallback:
 ### 3.7 校验命令
 
 ```bash
-python3 .github/lint_series.py versions/*/patches/
+python3 .github/lint.py features versions/*/patches/
 # features 字段完整 → 报错 + 缺字段名
 # patches 列表文件不存在 → 报错 + 路径
 # depends 引用未知 feature → 报错 + 未知 feature 名
@@ -283,16 +283,16 @@ python3 .github/lint_series.py versions/*/patches/
 
 | 校验项 | 工具 | 触发条件 | fail 表现 |
 |---|---|---|---|
-| patch header 6 必填 | `lint_patch_headers.py` | 任何 .patch | 缺字段 → 报错 + 列出缺失字段名 |
-| patch header `Upstream-Status` 枚举 | `lint_patch_headers.py` | 任何 .patch | 非 Yocto 8 状态 → 报错 + 列出合法值 |
-| patch header 条件必填联动 | `lint_patch_headers.py` | 任何 .patch | Submitted 缺 Upstream-PR → 报错 |
+| patch header 6 必填 | `lint.py headers` | 任何 .patch | 缺字段 → 报错 + 列出缺失字段名 |
+| patch header `Upstream-Status` 枚举 | `lint.py headers` | 任何 .patch | 非 Yocto 8 状态 → 报错 + 列出合法值 |
+| patch header 条件必填联动 | `lint.py headers` | 任何 .patch | Submitted 缺 Upstream-PR → 报错 |
 | `upstream.yaml.commit` 40-char SHA | `verify.sh` | CI / PR | rc=1 |
 | 仓根禁放检查 | `verify.sh` | CI / PR | rc=1 |
-| `features.<name>.patches` 文件存在 | `lint_series.py` | 任何 feature | 报错 + 缺文件路径 |
-| `features.<name>.depends` 引用存在 | `lint_series.py` | 任何 feature | 报错 + 未知 feature 名 |
-| `features.<name>.depends` 无环 | `lint_series.py` | 任何 feature | 报错 + 环路径 |
-| `features.<name>.upstream_status` 枚举 | `lint_series.py` | 任何 feature | 报错 + 列出合法值 |
-| 孤儿 patch(目录有但 features.yaml 未声明) | `lint_series.py` | 任何 feature | 报错 + 路径 |
+| `features.<name>.patches` 文件存在 | `lint.py features` | 任何 feature | 报错 + 缺文件路径 |
+| `features.<name>.depends` 引用存在 | `lint.py features` | 任何 feature | 报错 + 未知 feature 名 |
+| `features.<name>.depends` 无环 | `lint.py features` | 任何 feature | 报错 + 环路径 |
+| `features.<name>.upstream_status` 枚举 | `lint.py features` | 任何 feature | 报错 + 列出合法值 |
+| 孤儿 patch(目录有但 features.yaml 未声明) | `lint.py features` | 任何 feature | 报错 + 路径 |
 
 ### 4.3 一键本地 smoke
 
@@ -301,10 +301,10 @@ python3 .github/lint_series.py versions/*/patches/
 bash tools/verify.sh
 
 # 2) DEP-3 patch 头 schema(6 必填 + 条件必填 + 8 状态枚举)
-python3 .github/lint_patch_headers.py versions/*/patches/
+python3 .github/lint.py headers versions/*/patches/
 
 # 3) features.yaml schema + depends 解析 + DEP-3 必填字段
-python3 .github/lint_series.py versions/*/patches/
+python3 .github/lint.py features versions/*/patches/
 ```
 
 全部 rc=0 才算通过。
