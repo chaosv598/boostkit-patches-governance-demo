@@ -1,0 +1,6 @@
+# versions/redis-6.0.20/manifest.yaml
+# 6.0.20 已 EOL，仅保留 security-only patch
+
+repo: https://github.com/redis/redis
+version: 6.0.20
+commit: de0d9632b52849d9b7ea52408b1d681d771c5b46
